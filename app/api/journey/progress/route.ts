@@ -82,10 +82,15 @@ export async function GET(req: Request) {
         return Response.json({ completedSteps: [] })
       }
 
-      // Get completed steps from scan_steps
+      // Get completed steps from scan_steps and return scan_steps for display
       const completedSteps: string[] = []
-      if (scan.scan_steps && Array.isArray(scan.scan_steps)) {
-        scan.scan_steps.forEach((step: any) => {
+      const scanSteps = scan.scan_steps || []
+      
+      if (Array.isArray(scanSteps)) {
+        // Sort steps by step_order
+        scanSteps.sort((a: any, b: any) => a.step_order - b.step_order)
+        
+        scanSteps.forEach((step: any) => {
           // For document steps, check if manual document was uploaded
           if (step.step_type === "document") {
             if (step.manual_document_uploaded || step.status === "completed" || step.status === "approved") {
@@ -100,8 +105,11 @@ export async function GET(req: Request) {
         })
       }
 
-      console.log("[v0] Completed steps from scan:", completedSteps, "Total steps:", scan.scan_steps?.length || 0)
-      return Response.json({ completedSteps })
+      console.log("[v0] Completed steps from scan:", completedSteps, "Total steps:", scanSteps.length)
+      return Response.json({ 
+        completedSteps,
+        scanSteps: scanSteps // Return scan_steps so frontend can display all steps including document manual
+      })
     }
 
     // For other journey types, return empty for now
