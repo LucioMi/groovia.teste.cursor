@@ -130,6 +130,7 @@ export default function JornadaScanPage() {
   const [loading, setLoading] = useState(true)
   const [completedSteps, setCompletedSteps] = useState<string[]>([])
   const [scanSteps, setScanSteps] = useState<any[]>([])
+  const [isMigrating, setIsMigrating] = useState(false)
 
   const [steps, setSteps] = useState<JourneyStep[]>([])
 
@@ -166,6 +167,14 @@ export default function JornadaScanPage() {
         setScanSteps(scanStepsData)
         console.log("[v0] Loaded progress:", data.completedSteps)
         console.log("[v0] Loaded scan steps:", scanStepsData.length)
+
+        // Check if scan has less than 6 steps and migrate if needed
+        if (scanStepsData.length > 0 && scanStepsData.length < 6 && !isMigrating) {
+          console.log("[v0] Scan has less than 6 steps, migrating...")
+          setIsMigrating(true)
+          await migrateScan()
+          setIsMigrating(false)
+        }
       } else {
         console.error("[v0] Error fetching progress, status:", response.status)
         setCompletedSteps([])
@@ -175,6 +184,30 @@ export default function JornadaScanPage() {
       console.error("[v0] Error fetching progress:", error)
       setCompletedSteps([])
       setScanSteps([])
+    }
+  }
+
+  const migrateScan = async () => {
+    try {
+      console.log("[v0] Migrating scan to 6 steps...")
+      const response = await fetch("/api/scans/migrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        console.log("[v0] Scan migrated successfully:", data)
+        // Reload progress after migration
+        setTimeout(() => {
+          fetchProgress()
+        }, 1000)
+      } else {
+        const errorData = await response.json()
+        console.error("[v0] Error migrating scan:", errorData)
+      }
+    } catch (error) {
+      console.error("[v0] Error migrating scan:", error)
     }
   }
   
