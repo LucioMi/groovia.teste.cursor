@@ -72,14 +72,20 @@ export async function GET(req: Request) {
 
       if (!scan) {
         console.log("[v0] No active scan found, returning empty progress")
-        // Return empty progress if no active scan exists
-        return Response.json({ completedSteps: [] })
+        // Return empty progress and empty scanSteps if no active scan exists
+        return Response.json({ 
+          completedSteps: [],
+          scanSteps: [] // Explicitly return empty scanSteps array
+        })
       }
 
       // Verify scan status is in_progress
       if (scan.status !== "in_progress") {
         console.log("[v0] Scan is not in_progress, status:", scan.status)
-        return Response.json({ completedSteps: [] })
+        return Response.json({ 
+          completedSteps: [],
+          scanSteps: [] // Explicitly return empty scanSteps array
+        })
       }
 
       // Get completed steps from scan_steps and return scan_steps for display

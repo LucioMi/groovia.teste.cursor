@@ -137,20 +137,35 @@ export default function JornadaScanPage() {
     console.log("[v0] Jornada Scan - orgLoading:", orgLoading, "currentOrganization:", currentOrganization?.id)
 
     if (!orgLoading) {
+      // Buscar agentes primeiro
       fetchAgents()
+      // Buscar progresso
       fetchProgress()
     }
   }, [currentOrganization, orgLoading])
+  
+  // Quando agentes são carregados E não há scan_steps, criar scan automaticamente
+  useEffect(() => {
+    // Só criar scan se temos agentes da jornada scan mas não temos scan_steps
+    if (agents.length > 0 && scanSteps.length === 0 && !loading) {
+      console.log("[v0] Agents loaded but no scan_steps found, creating scan automatically...")
+      const timer = setTimeout(() => {
+        createScan()
+      }, 1000) // Aguardar 1s para garantir que tudo foi carregado
+      return () => clearTimeout(timer)
+    }
+  }, [agents.length, scanSteps.length, loading])
 
   const fetchProgress = async () => {
     try {
       const response = await fetch("/api/journey/progress?journeyType=scan")
       if (response.ok) {
         const data = await response.json()
+        const scanStepsData = data.scanSteps || []
         setCompletedSteps(data.completedSteps || [])
-        setScanSteps(data.scanSteps || [])
+        setScanSteps(scanStepsData)
         console.log("[v0] Loaded progress:", data.completedSteps)
-        console.log("[v0] Loaded scan steps:", data.scanSteps?.length || 0)
+        console.log("[v0] Loaded scan steps:", scanStepsData.length)
       } else {
         console.error("[v0] Error fetching progress, status:", response.status)
         setCompletedSteps([])
@@ -160,6 +175,31 @@ export default function JornadaScanPage() {
       console.error("[v0] Error fetching progress:", error)
       setCompletedSteps([])
       setScanSteps([])
+    }
+  }
+  
+  const createScan = async () => {
+    try {
+      console.log("[v0] Creating new scan...")
+      const response = await fetch("/api/scans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "Jornada Scan" }),
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        console.log("[v0] Scan created successfully:", data.scan?.id)
+        // Recarregar progresso após criar scan
+        setTimeout(() => {
+          fetchProgress()
+        }, 1000)
+      } else {
+        const errorData = await response.json()
+        console.error("[v0] Error creating scan:", errorData)
+      }
+    } catch (error) {
+      console.error("[v0] Error creating scan:", error)
     }
   }
   
@@ -252,9 +292,15 @@ export default function JornadaScanPage() {
   useEffect(() => {
     // Se temos scan_steps E agentes, construir steps a partir dos scan_steps (inclui etapa de documento manual)
     if (scanSteps.length > 0 && agents.length > 0) {
+      console.log("[v0] Building steps from scan_steps:", scanSteps.length, "steps")
       buildStepsFromScanSteps(scanSteps, completedSteps, agents)
+    } else if (scanSteps.length === 0 && agents.length > 0) {
+      // Se não temos scan_steps mas temos agentes, tentar criar scan
+      console.log("[v0] No scan_steps found but agents exist, will create scan if needed")
+      // O scan será criado em fetchProgress quando detectar ausência de scan_steps
     } else if (steps.length > 0 && scanSteps.length === 0) {
-      // Se não temos scan_steps mas temos steps dos agentes, atualizar apenas status
+      // Se não temos scan_steps mas temos steps dos agentes (fallback), atualizar apenas status
+      console.log("[v0] Updating existing steps status")
       setSteps((prevSteps) =>
         prevSteps.map((step, index) => {
           const isCompleted = completedSteps.includes(step.id)
@@ -279,17 +325,21 @@ export default function JornadaScanPage() {
       if (response.ok) {
         const data = await response.json()
         const fetchedAgents = data.agents || []
+        
+        // Filtrar apenas agentes da categoria "Jornada Scan"
+        const jornadaScanAgents = fetchedAgents.filter((a: Agent) => a.category === "Jornada Scan")
 
         console.log("[v0] === AGENTES RECEBIDOS ===")
         console.log("[v0] Total de agentes:", fetchedAgents.length)
+        console.log("[v0] Agentes da Jornada Scan:", jornadaScanAgents.length)
 
-        setAgents(fetchedAgents)
+        setAgents(jornadaScanAgents)
 
-        if (fetchedAgents.length > 0) {
-          const agentMap = new Map(fetchedAgents.map((a: Agent) => [a.id, a]))
-          const agentsWithPredecessors = new Set(fetchedAgents.map((a: Agent) => a.next_agent_id).filter(Boolean))
+        if (jornadaScanAgents.length > 0) {
+          const agentMap = new Map(jornadaScanAgents.map((a: Agent) => [a.id, a]))
+          const agentsWithPredecessors = new Set(jornadaScanAgents.map((a: Agent) => a.next_agent_id).filter(Boolean))
 
-          const firstAgent = fetchedAgents.find((a: Agent) => !agentsWithPredecessors.has(a.id))
+          const firstAgent = jornadaScanAgents.find((a: Agent) => !agentsWithPredecessors.has(a.id))
 
           if (firstAgent) {
             const orderedSteps: JourneyStep[] = []
@@ -321,7 +371,7 @@ export default function JornadaScanPage() {
 
             setSteps(orderedSteps)
           } else {
-            const fallbackSteps = fetchedAgents.slice(0, 6).map((agent: Agent, index: number) => {
+            const fallbackSteps = jornadaScanAgents.slice(0, 6).map((agent: Agent, index: number) => {
               const description = agent.description || `Passo ${index + 1} da jornada`
               const displayDescription = description.length > 150 ? description.substring(0, 150) + "..." : description
 

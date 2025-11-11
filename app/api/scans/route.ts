@@ -93,12 +93,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No organization found" }, { status: 404 })
     }
 
-    // Get all active agents ordered by next_agent_id to build the flow
+    // Get all active agents from "Jornada Scan" category ordered by next_agent_id to build the flow
     const { data: agents } = await supabase
       .from("agents")
       .select("*")
       .or(`organization_id.is.null,organization_id.eq.${membership.organization_id}`)
       .eq("status", "active")
+      .eq("category", "Jornada Scan")
       .order("created_at")
 
     if (!agents || agents.length === 0) {
