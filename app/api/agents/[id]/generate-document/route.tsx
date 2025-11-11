@@ -179,6 +179,56 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     console.log("[v0] [GEN-DOC] Document saved to database:", document.id)
+
+    // Vincular documento ao scan_step se a conversa estiver vinculada a uma jornada scan
+    try {
+      const { data: scanStep, error: scanStepError } = await supabase
+        .from("scan_steps")
+        .select("id, scan_id, step_order")
+        .eq("conversation_id", conversationId)
+        .maybeSingle()
+
+      if (scanStep && !scanStepError) {
+        console.log("[v0] [GEN-DOC] Found scan_step linked to conversation:", scanStep.id)
+
+        // Atualizar scan_step com output_document_id
+        const { error: updateError } = await supabase
+          .from("scan_steps")
+          .update({
+            output_document_id: document.id,
+            document_url: blob.url,
+          })
+          .eq("id", scanStep.id)
+
+        if (updateError) {
+          console.error("[v0] [GEN-DOC] Error updating scan_step:", updateError)
+        } else {
+          console.log("[v0] [GEN-DOC] Scan step updated with document:", scanStep.id)
+
+          // Vincular na tabela scan_step_documents
+          const { error: linkError } = await supabase
+            .from("scan_step_documents")
+            .insert({
+              scan_step_id: scanStep.id,
+              document_id: document.id,
+              document_type: "output",
+            })
+
+          if (linkError) {
+            // Se já existe, não é um erro crítico
+            console.log("[v0] [GEN-DOC] Document link may already exist or error:", linkError.message)
+          } else {
+            console.log("[v0] [GEN-DOC] Document linked to scan_step_documents")
+          }
+        }
+      } else {
+        console.log("[v0] [GEN-DOC] No scan_step found for this conversation (not part of a scan journey)")
+      }
+    } catch (linkError) {
+      // Não falhar a geração do documento se a vinculação falhar
+      console.error("[v0] [GEN-DOC] Error linking document to scan_step (non-critical):", linkError)
+    }
+
     console.log("[v0] [GEN-DOC] ========== DOCUMENT GENERATION COMPLETE ==========")
 
     return Response.json({
