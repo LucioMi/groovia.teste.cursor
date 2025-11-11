@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No organization found" }, { status: 404 })
     }
 
-    // Get all active agents from "Jornada Scan" category ordered by next_agent_id to build the flow
+    // Get all active agents from "Jornada Scan" category
     const { data: agents } = await supabase
       .from("agents")
       .select("*")
@@ -106,6 +106,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No agents available" }, { status: 400 })
     }
 
+    // Helper function to find agent by name
+    const findAgentByName = (name: string) => {
+      return agents.find((a) => a.name === name)
+    }
+
+    // Validate that all required agents exist
+    const requiredAgents = [
+      "SCAN",
+      "Mercado ICP",
+      "Persona",
+      "Sintetizador",
+      "GROOVIA INTELLIGENCE",
+    ]
+
+    const missingAgents = requiredAgents.filter((name) => !findAgentByName(name))
+    if (missingAgents.length > 0) {
+      console.error("[v0] Missing required agents:", missingAgents)
+      return NextResponse.json(
+        { error: "Missing required agents", missingAgents },
+        { status: 400 }
+      )
+    }
+
+    // Get the SCAN agent (first agent in the journey)
+    const scanAgent = findAgentByName("SCAN")
+    if (!scanAgent) {
+      return NextResponse.json({ error: "SCAN agent not found" }, { status: 400 })
+    }
+
     // Create the scan
     const { data: scan, error: scanError } = await supabase
       .from("scans")
@@ -114,7 +143,7 @@ export async function POST(request: NextRequest) {
         created_by: user.id,
         title: title || "Novo SCAN",
         status: "in_progress",
-        current_agent_id: agents[0].id,
+        current_agent_id: scanAgent.id,
       })
       .select()
       .single()
@@ -124,124 +153,194 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Failed to create scan" }, { status: 500 })
     }
 
-    // Create scan steps based on agent flow
-    // Estrutura: Etapa 1 (SCAN) -> Etapa 2 (SCAN Clarity - documento) -> Etapas 3-6 (agentes)
-    const scanSteps = []
-    let currentAgent = agents.find((a) => !agents.some((other) => other.next_agent_id === a.id)) || agents[0]
-    let stepOrder = 1
-    const visited = new Set<string>()
+    // Create scan steps explicitly for all 6 steps
+    // Etapa 1: SCAN (conversacional)
+    // Etapa 2: SCAN Clarity (documento manual)
+    // Etapa 3: Mercado ICP (autônomo)
+    // Etapa 4: Persona (autônomo)
+    // Etapa 5: Sintetizador (conversacional ou autônomo)
+    // Etapa 6: GROOVIA INTELLIGENCE (autônomo)
 
-    // Etapa 1: SCAN (primeiro agente - conversacional)
-    if (currentAgent) {
-      scanSteps.push({
+    const mercadoIcpAgent = findAgentByName("Mercado ICP")
+    const personaAgent = findAgentByName("Persona")
+    const sintetizadorAgent = findAgentByName("Sintetizador")
+    const intelligenceAgent = findAgentByName("GROOVIA INTELLIGENCE")
+
+    if (!mercadoIcpAgent || !personaAgent || !sintetizadorAgent || !intelligenceAgent) {
+      console.error("[v0] Missing agents:", { mercadoIcpAgent, personaAgent, sintetizadorAgent, intelligenceAgent })
+      return NextResponse.json({ error: "Required agents not found" }, { status: 500 })
+    }
+
+    // Create all 6 steps explicitly
+    const scanSteps = [
+      // Etapa 1: SCAN (conversacional)
+      {
         scan_id: scan.id,
-        agent_id: currentAgent.id,
-        step_order: stepOrder++,
-        step_type: "agent",
-        status: "in_progress",
+        agent_id: scanAgent.id,
+        step_order: 1,
+        step_type: "agent" as const,
+        status: "in_progress" as const,
         depends_on_step_ids: [],
         auto_execute: false,
-      })
-      visited.add(currentAgent.id)
-    }
-
-    // Etapa 2: SCAN Clarity (documento manual - não tem agente)
-    // Esta etapa depende da Etapa 1 (SCAN)
-    scanSteps.push({
-      scan_id: scan.id,
-      agent_id: null, // Documento manual não tem agente
-      step_order: stepOrder++,
-      step_type: "document",
-      status: "pending",
-      depends_on_step_ids: [], // Será atualizado após criar todas as etapas
-      document_template_url: null, // TODO: Adicionar URL do template quando disponível
-      manual_document_uploaded: false,
-      auto_execute: false,
-    })
-
-    // Continuar com os outros agentes (Etapas 3-6)
-    // Mercado ICP (Etapa 3), Persona (Etapa 4), Sintetizador (Etapa 5), GROOVIA INTELLIGENCE (Etapa 6)
-    currentAgent = agents.find((a) => a.id === currentAgent!.next_agent_id)
-    while (currentAgent && !visited.has(currentAgent.id) && stepOrder <= 10) {
-      // Determinar tipo de etapa baseado no agente
-      const stepType = currentAgent.is_passive ? "autonomous" : "agent"
-      
-      scanSteps.push({
+      },
+      // Etapa 2: SCAN Clarity (documento manual)
+      {
         scan_id: scan.id,
-        agent_id: currentAgent.id,
-        step_order: stepOrder++,
-        step_type: stepType,
-        status: "pending",
-        depends_on_step_ids: [], // Será atualizado após criar todas as etapas
-        auto_execute: currentAgent.is_passive || false,
-      })
+        agent_id: null,
+        step_order: 2,
+        step_type: "document" as const,
+        status: "pending" as const,
+        depends_on_step_ids: [], // Will be updated after creation
+        document_template_url: null,
+        manual_document_uploaded: false,
+        auto_execute: false,
+      },
+      // Etapa 3: Mercado ICP (autônomo)
+      {
+        scan_id: scan.id,
+        agent_id: mercadoIcpAgent.id,
+        step_order: 3,
+        step_type: "autonomous" as const,
+        status: "pending" as const,
+        depends_on_step_ids: [], // Will be updated after creation
+        auto_execute: true,
+      },
+      // Etapa 4: Persona (autônomo)
+      {
+        scan_id: scan.id,
+        agent_id: personaAgent.id,
+        step_order: 4,
+        step_type: "autonomous" as const,
+        status: "pending" as const,
+        depends_on_step_ids: [], // Will be updated after creation
+        auto_execute: true,
+      },
+      // Etapa 5: Sintetizador (determinar tipo baseado em is_passive)
+      {
+        scan_id: scan.id,
+        agent_id: sintetizadorAgent.id,
+        step_order: 5,
+        step_type: (sintetizadorAgent.is_passive ? "autonomous" : "agent") as const,
+        status: "pending" as const,
+        depends_on_step_ids: [], // Will be updated after creation
+        auto_execute: sintetizadorAgent.is_passive || false,
+      },
+      // Etapa 6: GROOVIA INTELLIGENCE (autônomo)
+      {
+        scan_id: scan.id,
+        agent_id: intelligenceAgent.id,
+        step_order: 6,
+        step_type: "autonomous" as const,
+        status: "pending" as const,
+        depends_on_step_ids: [], // Will be updated after creation
+        auto_execute: true,
+      },
+    ]
 
-      visited.add(currentAgent.id)
-      currentAgent = agents.find((a) => a.id === currentAgent!.next_agent_id)
+    // Insert all scan steps
+    const { data: createdSteps, error: stepsError } = await supabase
+      .from("scan_steps")
+      .insert(scanSteps)
+      .select()
+
+    if (stepsError) {
+      console.error("[v0] Error creating scan steps:", stepsError)
+      return NextResponse.json({ error: "Failed to create scan steps", details: stepsError.message }, { status: 500 })
     }
 
-    if (scanSteps.length > 0) {
-      const { data: createdSteps, error: stepsError } = await supabase
-        .from("scan_steps")
-        .insert(scanSteps)
-        .select()
+    if (!createdSteps || createdSteps.length !== 6) {
+      console.error("[v0] Expected 6 steps but got:", createdSteps?.length)
+      return NextResponse.json({ error: "Failed to create all scan steps" }, { status: 500 })
+    }
 
-      if (stepsError) {
-        console.error("[v0] Error creating scan steps:", stepsError)
-        return NextResponse.json({ error: "Failed to create scan steps", details: stepsError.message }, { status: 500 })
-      }
+    // Sort steps by step_order to ensure correct order
+    const sortedSteps = createdSteps.sort((a, b) => a.step_order - b.step_order)
 
-      // Atualizar depends_on_step_ids com os IDs reais das etapas
-      // Seguindo a estrutura: Etapa 1 -> Etapa 2 (depende de 1) -> Etapa 3 (depende de 1) -> Etapa 4 (depende de 1,2,3) -> Etapa 5 (depende de 2) -> Etapa 6 (depende de todas)
-      if (createdSteps && createdSteps.length > 0) {
-        const step1Id = createdSteps[0]?.id // SCAN
-        const step2Id = createdSteps[1]?.id // SCAN Clarity
-        const step3Id = createdSteps[2]?.id // Mercado ICP
-        const step4Id = createdSteps[3]?.id // Persona
-        const step5Id = createdSteps[4]?.id // Sintetizador
-        const step6Id = createdSteps[5]?.id // GROOVIA INTELLIGENCE
+    // Update depends_on_step_ids with the actual step IDs
+    // Etapa 1 (SCAN): no dependencies
+    // Etapa 2 (SCAN Clarity): depends on Etapa 1
+    // Etapa 3 (Mercado ICP): depends on Etapa 1
+    // Etapa 4 (Persona): depends on Etapas 1, 2, 3
+    // Etapa 5 (Sintetizador): depends on Etapa 2
+    // Etapa 6 (GROOVIA INTELLIGENCE): depends on all previous steps (1, 2, 3, 4, 5)
 
-        // Etapa 2: SCAN Clarity depende da Etapa 1
-        if (step2Id && step1Id) {
-          await supabase
-            .from("scan_steps")
-            .update({ depends_on_step_ids: [step1Id] })
-            .eq("id", step2Id)
-        }
+    const step1Id = sortedSteps[0]?.id // SCAN
+    const step2Id = sortedSteps[1]?.id // SCAN Clarity
+    const step3Id = sortedSteps[2]?.id // Mercado ICP
+    const step4Id = sortedSteps[3]?.id // Persona
+    const step5Id = sortedSteps[4]?.id // Sintetizador
+    const step6Id = sortedSteps[5]?.id // GROOVIA INTELLIGENCE
 
-        // Etapa 3: Mercado ICP depende da Etapa 1
-        if (step3Id && step1Id) {
-          await supabase
-            .from("scan_steps")
-            .update({ depends_on_step_ids: [step1Id] })
-            .eq("id", step3Id)
-        }
+    // Update dependencies for each step
+    const updatePromises: Promise<any>[] = []
 
-        // Etapa 4: Persona depende das Etapas 1, 2 e 3
-        if (step4Id && step1Id && step2Id && step3Id) {
-          await supabase
-            .from("scan_steps")
-            .update({ depends_on_step_ids: [step1Id, step2Id, step3Id] })
-            .eq("id", step4Id)
-        }
+    // Etapa 2: SCAN Clarity depende da Etapa 1
+    if (step2Id && step1Id) {
+      updatePromises.push(
+        supabase
+          .from("scan_steps")
+          .update({ depends_on_step_ids: [step1Id] })
+          .eq("id", step2Id)
+      )
+    }
 
-        // Etapa 5: Sintetizador depende da Etapa 2
-        if (step5Id && step2Id) {
-          await supabase
-            .from("scan_steps")
-            .update({ depends_on_step_ids: [step2Id] })
-            .eq("id", step5Id)
-        }
+    // Etapa 3: Mercado ICP depende da Etapa 1
+    if (step3Id && step1Id) {
+      updatePromises.push(
+        supabase
+          .from("scan_steps")
+          .update({ depends_on_step_ids: [step1Id] })
+          .eq("id", step3Id)
+      )
+    }
 
-        // Etapa 6: GROOVIA INTELLIGENCE depende de todas as etapas anteriores
-        if (step6Id && step1Id && step2Id && step3Id && step4Id && step5Id) {
-          await supabase
-            .from("scan_steps")
-            .update({ depends_on_step_ids: [step1Id, step2Id, step3Id, step4Id, step5Id] })
-            .eq("id", step6Id)
-        }
+    // Etapa 4: Persona depende das Etapas 1, 2 e 3
+    if (step4Id && step1Id && step2Id && step3Id) {
+      updatePromises.push(
+        supabase
+          .from("scan_steps")
+          .update({ depends_on_step_ids: [step1Id, step2Id, step3Id] })
+          .eq("id", step4Id)
+      )
+    }
+
+    // Etapa 5: Sintetizador depende da Etapa 2
+    if (step5Id && step2Id) {
+      updatePromises.push(
+        supabase
+          .from("scan_steps")
+          .update({ depends_on_step_ids: [step2Id] })
+          .eq("id", step5Id)
+      )
+    }
+
+    // Etapa 6: GROOVIA INTELLIGENCE depende de todas as etapas anteriores
+    if (step6Id && step1Id && step2Id && step3Id && step4Id && step5Id) {
+      updatePromises.push(
+        supabase
+          .from("scan_steps")
+          .update({ depends_on_step_ids: [step1Id, step2Id, step3Id, step4Id, step5Id] })
+          .eq("id", step6Id)
+      )
+    }
+
+    // Execute all updates
+    if (updatePromises.length > 0) {
+      const updateResults = await Promise.all(updatePromises)
+      const updateErrors = updateResults.filter((result) => result?.error)
+      if (updateErrors.length > 0) {
+        console.error("[v0] Error updating step dependencies:", updateErrors)
+        // Don't fail the request, but log the error
+      } else {
+        console.log("[v0] Successfully updated all step dependencies")
       }
     }
+
+    console.log("[v0] Created scan with 6 steps:", {
+      scanId: scan.id,
+      stepsCreated: sortedSteps.length,
+      stepOrders: sortedSteps.map((s) => s.step_order),
+    })
 
     return NextResponse.json({ scan }, { status: 201 })
   } catch (error) {

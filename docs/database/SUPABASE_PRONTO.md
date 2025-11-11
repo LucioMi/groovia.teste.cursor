@@ -3,7 +3,7 @@
 ## 🎯 O QUE FOI FEITO
 
 1. **DELETEI** todos os 26 scripts SQL antigos que estavam causando confusão
-2. **CRIEI** UM ÚNICO script SQL completo: `scripts/000_COMPLETE_SCHEMA_SUPABASE.sql`
+2. **CRIEI** UM ÚNICO script SQL completo: `scripts/000_COMPLETE_SCHEMA_V2.sql`
 3. **CONFIGUREI** para usar o AUTH DO SUPABASE (`auth.users`)
 4. **IMPLEMENTEI** multi-tenancy correto: **UM USUÁRIO PODE TER MÚLTIPLAS ORGANIZAÇÕES**
 
@@ -39,7 +39,7 @@ Um usuário pode:
 
 1. Acesse o Supabase Dashboard
 2. Vá em **SQL Editor**
-3. Copie TODO o conteúdo de `scripts/000_COMPLETE_SCHEMA_SUPABASE.sql`
+3. Copie TODO o conteúdo de `scripts/000_COMPLETE_SCHEMA_V2.sql`
 4. Cole e execute (Run)
 
 ### 2. Criar o Primeiro Super Admin

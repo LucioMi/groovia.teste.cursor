@@ -64,7 +64,7 @@ export function AgentCard({ id, name, description, category, lastSession, status
       if (onDelete) {
         onDelete(id)
       } else {
-        window.location.href = "/agentes"
+        window.location.href = "/dashboard/agentes"
       }
     } catch (error) {
       console.error("[v0] Error deleting agent:", error)

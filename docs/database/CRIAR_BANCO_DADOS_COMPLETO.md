@@ -22,33 +22,9 @@ Este documento contém as instruções para criar todas as tabelas do banco de d
 
 ### 2. Apagar Tabelas Existentes (Se Necessário)
 
-Se você já tem tabelas no banco, execute este comando primeiro para apagá-las:
+Se você já tem tabelas no banco, execute este comando primeiro para apagá-las. Este comando está no início do script `scripts/000_COMPLETE_SCHEMA_V2.sql` como comentário.
 
-```sql
--- CUIDADO: Isso vai apagar TODAS as tabelas!
-DROP TABLE IF EXISTS scan_step_documents CASCADE;
-DROP TABLE IF EXISTS scan_steps CASCADE;
-DROP TABLE IF EXISTS scans CASCADE;
-DROP TABLE IF EXISTS ai_gateway_logs CASCADE;
-DROP TABLE IF EXISTS audit_logs CASCADE;
-DROP TABLE IF EXISTS webhook_logs CASCADE;
-DROP TABLE IF EXISTS webhooks CASCADE;
-DROP TABLE IF EXISTS payments CASCADE;
-DROP TABLE IF EXISTS organization_subscriptions CASCADE;
-DROP TABLE IF EXISTS subscription_plans CASCADE;
-DROP TABLE IF EXISTS knowledge_bases CASCADE;
-DROP TABLE IF EXISTS documents CASCADE;
-DROP TABLE IF EXISTS messages CASCADE;
-DROP TABLE IF EXISTS conversations CASCADE;
-DROP TABLE IF EXISTS agents CASCADE;
-DROP TABLE IF EXISTS user_preferences CASCADE;
-DROP TABLE IF EXISTS user_roles CASCADE;
-DROP TABLE IF EXISTS organization_memberships CASCADE;
-DROP TABLE IF EXISTS organizations CASCADE;
-
--- Apagar funções e triggers
-DROP FUNCTION IF EXISTS update_updated_at_column() CASCADE;
-```
+**Nota**: O script completo já inclui a criação de todas as tabelas. Se você está criando do zero, não precisa apagar nada.
 
 ### 3. Executar o Script Completo
 

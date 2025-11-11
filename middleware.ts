@@ -101,7 +101,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/dashboard") ||
     pathname.startsWith("/(dashboard)") || // Adicionar suporte para route groups
     pathname.includes("/(dashboard)/") || // Match em qualquer lugar do path
-    pathname.startsWith("/agentes") ||
+    pathname.startsWith("/dashboard/agentes") ||
     pathname.startsWith("/controle-agentes") ||
     pathname.startsWith("/documentos") ||
     pathname.startsWith("/perfil") ||

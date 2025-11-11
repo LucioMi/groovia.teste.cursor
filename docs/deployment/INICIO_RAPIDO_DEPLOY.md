@@ -45,7 +45,7 @@ Vá em **Settings** → **Environment Variables** e adicione:
 
 ## 📚 Documentação Completa
 
-Para instruções detalhadas, veja: **[DEPLOY_VERCEL.md](./DEPLOY_VERCEL.md)**
+Para instruções detalhadas, veja: **[DEPLOYMENT_GUIDE.md](../../DEPLOYMENT_GUIDE.md)** ou **[DEPLOY_VERCEL.md](./DEPLOY_VERCEL.md)**
 
 ## ✅ Checklist
 
@@ -59,5 +59,5 @@ Para instruções detalhadas, veja: **[DEPLOY_VERCEL.md](./DEPLOY_VERCEL.md)**
 
 ## 🆘 Precisa de Ajuda?
 
-Veja a seção "Solução de Problemas" no arquivo `DEPLOY_VERCEL.md`
+Veja a seção "Solução de Problemas" no arquivo [DEPLOY_VERCEL.md](./DEPLOY_VERCEL.md) ou [DEPLOYMENT_GUIDE.md](../../DEPLOYMENT_GUIDE.md)
 

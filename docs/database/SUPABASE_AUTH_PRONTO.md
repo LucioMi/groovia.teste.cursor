@@ -3,7 +3,7 @@
 ## ✅ O QUE FOI FEITO
 
 ### 1. Script SQL Completo
-- **Arquivo:** `scripts/000_COMPLETE_SCHEMA_SUPABASE.sql`
+- **Arquivo:** `scripts/000_COMPLETE_SCHEMA_V2.sql`
 - Cria TODAS as tabelas necessárias
 - **NÃO usa `auth.users`** - o Supabase Auth gerencia isso automaticamente
 - Pronto para executar no SQL Editor do Supabase
@@ -34,7 +34,7 @@
 
 1. Acesse: https://supabase.com/dashboard
 2. Vá em **SQL Editor**
-3. Copie o conteúdo de `scripts/000_COMPLETE_SCHEMA_SUPABASE.sql`
+3. Copie o conteúdo de `scripts/000_COMPLETE_SCHEMA_V2.sql`
 4. Cole e clique em **Run**
 5. Aguarde a execução (criará todas as tabelas)
 

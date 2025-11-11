@@ -83,6 +83,10 @@ DISABLE_ADMIN_AUTH=false
 
 ## Configuração do Banco de Dados
 
+**Nota**: Para instruções detalhadas sobre a configuração do banco de dados, consulte:
+- [Criar Banco de Dados Completo](./docs/database/CRIAR_BANCO_DADOS_COMPLETO.md) - Guia completo
+- [Criar Agentes da Jornada Scan](./docs/database/CRIAR_AGENTES_JORNADA_SCAN.md) - Como criar agentes
+
 ### 1. Criar Projeto no Supabase
 
 1. Acesse [supabase.com](https://supabase.com)
@@ -107,51 +111,20 @@ DISABLE_ADMIN_AUTH=false
    - **Pooler** (transaction mode): `SUPABASE_POSTGRES_PRISMA_URL`
    - **Session mode**: `SUPABASE_POSTGRES_URL_NON_POOLING`
 
-### 3. Executar Migrações do Banco de Dados
+### 3. Executar Script SQL do Banco de Dados
 
-Execute os scripts SQL na seguinte ordem no **SQL Editor** do Supabase:
+**Importante**: Agora usamos um único script SQL completo que cria todas as tabelas de uma vez.
 
-#### a) Script 001 - Tabelas Principais
-\`\`\`bash
-# Copie o conteúdo de scripts/001_initial_schema.sql
-# Cole no SQL Editor do Supabase e execute
-\`\`\`
+1. Acesse o **SQL Editor** do Supabase
+2. Copie o conteúdo completo de `scripts/000_COMPLETE_SCHEMA_V2.sql`
+3. Cole no SQL Editor e execute (Run)
+4. Aguarde a execução (pode levar 1-2 minutos)
 
-#### b) Script 002 - Funções e Triggers
-\`\`\`bash
-# Copie o conteúdo de scripts/002_functions_and_triggers.sql
-# Cole no SQL Editor do Supabase e execute
-\`\`\`
+**Próximo passo**: Após executar o schema completo, crie os agentes da jornada scan:
+1. Copie o conteúdo de `scripts/014_CREATE_SCAN_JOURNEY_AGENTS.sql`
+2. Cole no SQL Editor e execute
 
-#### c) Script 003 - Row Level Security (RLS)
-\`\`\`bash
-# Copie o conteúdo de scripts/003_rls_policies.sql
-# Cole no SQL Editor do Supabase e execute
-\`\`\`
-
-#### d) Script 004 - Fix RLS Recursion
-\`\`\`bash
-# Copie o conteúdo de scripts/004_FIX_USER_ROLES_RLS_RECURSION.sql
-# Cole no SQL Editor do Supabase e execute
-\`\`\`
-
-#### e) Script 005 - Agents Global
-\`\`\`bash
-# Copie o conteúdo de scripts/005_make_agents_global.sql
-# Cole no SQL Editor do Supabase e execute
-\`\`\`
-
-#### f) Scripts 006-012 - Correções Adicionais
-\`\`\`bash
-# Execute todos os scripts restantes na ordem numérica:
-# - 006_add_conversation_metadata.sql
-# - 007_add_agent_model_field.sql
-# - 008_add_file_support.sql
-# - 009_add_webhooks.sql
-# - 010_add_sessions.sql
-# - 011_FIX_ORGANIZATION_MEMBERSHIPS_RLS.sql
-# - 012_FIX_CONVERSATIONS_RLS.sql
-\`\`\`
+Para instruções detalhadas, consulte: [Criar Banco de Dados Completo](./docs/database/CRIAR_BANCO_DADOS_COMPLETO.md)
 
 ### 4. Verificar Tabelas Criadas
 
@@ -382,8 +355,8 @@ Após o deploy, verifique no dashboard da Vercel:
 **Causa**: RLS policies com referências circulares
 
 **Solução**:
-1. Execute o script `011_FIX_ORGANIZATION_MEMBERSHIPS_RLS.sql`
-2. Execute o script `012_FIX_CONVERSATIONS_RLS.sql`
+1. Execute o script completo `scripts/000_COMPLETE_SCHEMA_V2.sql` (já inclui todas as correções)
+2. Verifique se as tabelas foram criadas corretamente
 3. Verifique se as policies foram atualizadas:
 \`\`\`sql
 SELECT * FROM pg_policies 
