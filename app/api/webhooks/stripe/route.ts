@@ -7,6 +7,14 @@ import { updateOrganizationSubscription } from "@/lib/subscriptions"
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!
 
 export async function POST(req: NextRequest) {
+  // Verificar se Stripe está configurado
+  if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_WEBHOOK_SECRET) {
+    return NextResponse.json(
+      { error: "Stripe is not configured" },
+      { status: 503 }
+    )
+  }
+
   const body = await req.text()
   const headersList = await headers()
   const signature = headersList.get("stripe-signature")
