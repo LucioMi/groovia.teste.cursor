@@ -146,9 +146,13 @@ export default function JornadaScanPage() {
         const data = await response.json()
         setCompletedSteps(data.completedSteps || [])
         console.log("[v0] Loaded progress:", data.completedSteps)
+      } else {
+        console.error("[v0] Error fetching progress, status:", response.status)
+        setCompletedSteps([])
       }
     } catch (error) {
       console.error("[v0] Error fetching progress:", error)
+      setCompletedSteps([])
     }
   }
 
@@ -422,7 +426,7 @@ export default function JornadaScanPage() {
           ))}
         </div>
 
-        {steps.every((s) => s.completed) && (
+        {steps.length > 0 && steps.every((s) => s.completed) && (
           <div className="rounded-2xl border-2 border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 p-8 text-center">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
               <CheckCircleIcon />
