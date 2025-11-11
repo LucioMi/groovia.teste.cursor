@@ -160,6 +160,8 @@ export default function JornadaScanPage() {
     setSteps((prevSteps) =>
       prevSteps.map((step, index) => {
         const isCompleted = completedSteps.includes(step.id)
+        // Verificar se a etapa anterior foi completada
+        // Para a primeira etapa, sempre desbloqueada
         const previousStepCompleted = index === 0 || completedSteps.includes(prevSteps[index - 1].id)
 
         return {
@@ -252,18 +254,25 @@ export default function JornadaScanPage() {
 
   const handleStartAgent = (agentId: string, stepId: string) => {
     const step = steps.find((s) => s.id === stepId)
-    console.log("[v0] === INICIANDO AGENTE ===")
+    console.log("[v0] === INICIANDO ETAPA ===")
     console.log("[v0] Agent ID:", agentId)
     console.log("[v0] Step ID:", stepId)
     console.log("[v0] Step details:", step)
     console.log("[v0] Is passive:", step?.agent?.is_passive)
 
+    // Verificar se é etapa do tipo "document" (documento manual)
+    // TODO: Implementar página de documento manual para etapa 2
     if (step?.agent?.is_passive) {
       console.log("[v0] Agente é PASSIVO - executando automaticamente")
       handleCompleteStep(stepId)
-    } else {
+    } else if (agentId) {
       console.log("[v0] Agente é INTERATIVO - redirecionando para chat")
       router.push(`/dashboard/agentes/${agentId}?journey=scan&step=${stepId}`)
+    } else {
+      console.log("[v0] Etapa sem agente (documento manual) - redirecionando para página de documento")
+      // TODO: Implementar rota para página de documento manual
+      // router.push(`/dashboard/jornada-scan/${stepId}/documento`)
+      alert("Funcionalidade de documento manual em desenvolvimento")
     }
   }
 

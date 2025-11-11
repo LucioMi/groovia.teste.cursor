@@ -49,6 +49,12 @@ export async function GET(req: Request) {
             step_order,
             status,
             agent_id,
+            step_type,
+            depends_on_step_ids,
+            input_document_ids,
+            output_document_id,
+            manual_document_uploaded,
+            auto_execute,
             completed_at
           )
         `,
@@ -80,10 +86,16 @@ export async function GET(req: Request) {
       const completedSteps: string[] = []
       if (scan.scan_steps && Array.isArray(scan.scan_steps)) {
         scan.scan_steps.forEach((step: any) => {
-          // Only count steps that are completed or approved
-          if (step.status === "completed" || step.status === "approved") {
-            // Map step_order to step ID format used in the frontend (scan-{step_order})
-            completedSteps.push(`scan-${step.step_order}`)
+          // For document steps, check if manual document was uploaded
+          if (step.step_type === "document") {
+            if (step.manual_document_uploaded || step.status === "completed" || step.status === "approved") {
+              completedSteps.push(`scan-${step.step_order}`)
+            }
+          } else {
+            // For other step types, check status
+            if (step.status === "completed" || step.status === "approved") {
+              completedSteps.push(`scan-${step.step_order}`)
+            }
           }
         })
       }

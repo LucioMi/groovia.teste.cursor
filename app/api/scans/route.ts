@@ -20,13 +20,13 @@ export async function GET(request: NextRequest) {
     const supabase = createServiceClient()
 
     // Get user's organization
-    const { data: userOrg } = await supabase
-      .from("user_organizations")
+    const { data: membership } = await supabase
+      .from("organization_memberships")
       .select("organization_id")
       .eq("user_id", user.id)
       .maybeSingle()
 
-    if (!userOrg?.organization_id) {
+    if (!membership?.organization_id) {
       return NextResponse.json({ error: "No organization found" }, { status: 404 })
     }
 
@@ -40,12 +40,15 @@ export async function GET(request: NextRequest) {
           id,
           agent_id,
           step_order,
+          step_type,
           status,
+          depends_on_step_ids,
+          manual_document_uploaded,
           completed_at
         )
       `,
       )
-      .eq("organization_id", userOrg.organization_id)
+      .eq("organization_id", membership.organization_id)
       .order("created_at", { ascending: false })
 
     if (error) {
@@ -80,13 +83,13 @@ export async function POST(request: NextRequest) {
     const supabase = createServiceClient()
 
     // Get user's organization
-    const { data: userOrg } = await supabase
-      .from("user_organizations")
+    const { data: membership } = await supabase
+      .from("organization_memberships")
       .select("organization_id")
       .eq("user_id", user.id)
       .maybeSingle()
 
-    if (!userOrg?.organization_id) {
+    if (!membership?.organization_id) {
       return NextResponse.json({ error: "No organization found" }, { status: 404 })
     }
 
@@ -94,7 +97,7 @@ export async function POST(request: NextRequest) {
     const { data: agents } = await supabase
       .from("agents")
       .select("*")
-      .or(`organization_id.is.null,organization_id.eq.${userOrg.organization_id}`)
+      .or(`organization_id.is.null,organization_id.eq.${membership.organization_id}`)
       .eq("status", "active")
       .order("created_at")
 
@@ -106,7 +109,7 @@ export async function POST(request: NextRequest) {
     const { data: scan, error: scanError } = await supabase
       .from("scans")
       .insert({
-        organization_id: userOrg.organization_id,
+        organization_id: membership.organization_id,
         created_by: user.id,
         title: title || "Novo SCAN",
         status: "in_progress",
@@ -121,17 +124,24 @@ export async function POST(request: NextRequest) {
     }
 
     // Create scan steps based on agent flow
+    // Agora suporta diferentes tipos de etapas
     const scanSteps = []
     let currentAgent = agents.find((a) => !agents.some((other) => other.next_agent_id === a.id)) || agents[0]
     let stepOrder = 1
     const visited = new Set<string>()
 
-    while (currentAgent && !visited.has(currentAgent.id)) {
+    while (currentAgent && !visited.has(currentAgent.id) && stepOrder <= 10) {
+      // Determinar tipo de etapa baseado no agente
+      const stepType = currentAgent.is_passive ? "autonomous" : "agent"
+      
       scanSteps.push({
         scan_id: scan.id,
         agent_id: currentAgent.id,
         step_order: stepOrder,
+        step_type: stepType,
         status: stepOrder === 1 ? "in_progress" : "pending",
+        depends_on_step_ids: [], // Será atualizado após criar todas as etapas
+        auto_execute: currentAgent.is_passive || false,
       })
 
       visited.add(currentAgent.id)
@@ -140,10 +150,27 @@ export async function POST(request: NextRequest) {
     }
 
     if (scanSteps.length > 0) {
-      const { error: stepsError } = await supabase.from("scan_steps").insert(scanSteps)
+      const { data: createdSteps, error: stepsError } = await supabase
+        .from("scan_steps")
+        .insert(scanSteps)
+        .select()
 
       if (stepsError) {
         console.error("[v0] Error creating scan steps:", stepsError)
+        return NextResponse.json({ error: "Failed to create scan steps", details: stepsError.message }, { status: 500 })
+      }
+
+      // Atualizar depends_on_step_ids com os IDs reais das etapas anteriores
+      if (createdSteps && createdSteps.length > 1) {
+        for (let i = 1; i < createdSteps.length; i++) {
+          const previousStepId = createdSteps[i - 1].id
+          await supabase
+            .from("scan_steps")
+            .update({
+              depends_on_step_ids: [previousStepId],
+            })
+            .eq("id", createdSteps[i].id)
+        }
       }
     }
 
