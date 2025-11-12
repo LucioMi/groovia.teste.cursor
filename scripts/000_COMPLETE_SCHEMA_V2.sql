@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS organizations (
   description TEXT,
   logo_url TEXT,
   website TEXT,
+  owner_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   metadata JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -99,7 +100,7 @@ CREATE TABLE IF NOT EXISTS agents (
   description TEXT,
   short_description TEXT,
   category TEXT,
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'archived')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'archived', 'in_use')),
   system_prompt TEXT,
   model TEXT DEFAULT 'gpt-4',
   temperature DECIMAL(3,2) DEFAULT 0.7,
@@ -109,6 +110,9 @@ CREATE TABLE IF NOT EXISTS agents (
   next_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
   openai_assistant_id TEXT,
   openai_vector_store_id TEXT,
+  openai_thread_id TEXT,
+  openai_synced_at TIMESTAMP WITH TIME ZONE,
+  last_session TIMESTAMP WITH TIME ZONE,
   metadata JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -199,6 +203,164 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
 
 CREATE INDEX idx_knowledge_bases_agent ON knowledge_bases(agent_id);
 CREATE INDEX idx_knowledge_bases_org ON knowledge_bases(organization_id);
+
+-- 3.10. Agent Rules (Regras de Agentes)
+CREATE TABLE IF NOT EXISTS agent_rules (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  rule_type TEXT NOT NULL,
+  priority INTEGER DEFAULT 0,
+  config JSONB DEFAULT '{}'::jsonb,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_agent_rules_agent_id ON agent_rules(agent_id);
+CREATE INDEX idx_agent_rules_priority ON agent_rules(agent_id, priority DESC);
+CREATE INDEX idx_agent_rules_active ON agent_rules(agent_id, is_active) WHERE is_active = true;
+
+-- 3.11. Agent Behaviors (Comportamentos de Agentes)
+CREATE TABLE IF NOT EXISTS agent_behaviors (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  behavior_type TEXT NOT NULL,
+  parameters JSONB DEFAULT '{}'::jsonb,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_agent_behaviors_agent_id ON agent_behaviors(agent_id);
+CREATE INDEX idx_agent_behaviors_active ON agent_behaviors(agent_id, is_active) WHERE is_active = true;
+
+-- 3.12. Agent Sessions (Sessões de Agentes)
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'completed', 'cancelled')),
+  metadata JSONB DEFAULT '{}'::jsonb,
+  started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  ended_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_agent_sessions_agent_id ON agent_sessions(agent_id);
+CREATE INDEX idx_agent_sessions_user_id ON agent_sessions(user_id);
+CREATE INDEX idx_agent_sessions_org_id ON agent_sessions(organization_id);
+CREATE INDEX idx_agent_sessions_started_at ON agent_sessions(started_at DESC);
+
+-- 3.13. Agent Analytics (Analytics de Agentes)
+CREATE TABLE IF NOT EXISTS agent_analytics (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  metric_type TEXT NOT NULL,
+  metric_value NUMERIC DEFAULT 0,
+  metadata JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_agent_analytics_agent_id ON agent_analytics(agent_id);
+CREATE INDEX idx_agent_analytics_metric_type ON agent_analytics(metric_type);
+CREATE INDEX idx_agent_analytics_created_at ON agent_analytics(created_at DESC);
+
+-- 3.14. Message Feedback (Feedback de Mensagens)
+CREATE TABLE IF NOT EXISTS message_feedback (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  feedback_type TEXT NOT NULL CHECK (feedback_type IN ('approved', 'rejected', 'helpful', 'not_helpful')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(message_id, user_id)
+);
+
+CREATE INDEX idx_message_feedback_message_id ON message_feedback(message_id);
+CREATE INDEX idx_message_feedback_conversation_id ON message_feedback(conversation_id);
+CREATE INDEX idx_message_feedback_user_id ON message_feedback(user_id);
+CREATE INDEX idx_message_feedback_type ON message_feedback(feedback_type);
+
+-- 3.15. Approved Responses (Respostas Aprovadas)
+CREATE TABLE IF NOT EXISTS approved_responses (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  question TEXT NOT NULL,
+  response TEXT NOT NULL,
+  order_index INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_approved_responses_conversation_id ON approved_responses(conversation_id);
+CREATE INDEX idx_approved_responses_agent_id ON approved_responses(agent_id);
+CREATE INDEX idx_approved_responses_user_id ON approved_responses(user_id);
+CREATE INDEX idx_approved_responses_order ON approved_responses(conversation_id, order_index);
+
+-- 3.16. Vector Store Files (Arquivos de Vector Store)
+CREATE TABLE IF NOT EXISTS vector_store_files (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  knowledge_base_id TEXT REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+  openai_file_id TEXT NOT NULL,
+  openai_vector_store_id TEXT,
+  filename TEXT NOT NULL,
+  status TEXT DEFAULT 'uploaded' CHECK (status IN ('uploaded', 'processing', 'completed', 'failed')),
+  synced_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(agent_id, openai_file_id)
+);
+
+CREATE INDEX idx_vector_store_files_agent_id ON vector_store_files(agent_id);
+CREATE INDEX idx_vector_store_files_knowledge_base_id ON vector_store_files(knowledge_base_id);
+CREATE INDEX idx_vector_store_files_openai_file_id ON vector_store_files(openai_file_id);
+CREATE INDEX idx_vector_store_files_vector_store_id ON vector_store_files(openai_vector_store_id) WHERE openai_vector_store_id IS NOT NULL;
+CREATE INDEX idx_vector_store_files_status ON vector_store_files(status);
+
+-- 3.17. Assistant Runs (Execuções de Assistente)
+CREATE TABLE IF NOT EXISTS assistant_runs (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+  thread_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'in_progress', 'completed', 'failed', 'cancelled')),
+  error_message TEXT,
+  completed_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_assistant_runs_agent_id ON assistant_runs(agent_id);
+CREATE INDEX idx_assistant_runs_conversation_id ON assistant_runs(conversation_id) WHERE conversation_id IS NOT NULL;
+CREATE INDEX idx_assistant_runs_thread_id ON assistant_runs(thread_id);
+CREATE INDEX idx_assistant_runs_run_id ON assistant_runs(run_id);
+CREATE INDEX idx_assistant_runs_status ON assistant_runs(status);
+CREATE INDEX idx_assistant_runs_created_at ON assistant_runs(created_at DESC);
+
+-- 3.18. Password Reset Tokens (Tokens de Recuperação de Senha)
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  used BOOLEAN DEFAULT false,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+CREATE INDEX idx_password_reset_tokens_token ON password_reset_tokens(token);
+CREATE INDEX idx_password_reset_tokens_used ON password_reset_tokens(used, expires_at) WHERE used = false;
 
 -- ============================================
 -- 4. TABELAS DE SCANS (JORNADA SCAN) - MELHORADAS
@@ -296,6 +458,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
   agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,
   url TEXT NOT NULL,
   events TEXT[] NOT NULL,
+  event_type TEXT,
   secret TEXT,
   is_active BOOLEAN DEFAULT true,
   metadata JSONB DEFAULT '{}'::jsonb,
@@ -305,6 +468,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
 
 CREATE INDEX idx_webhooks_org ON webhooks(organization_id);
 CREATE INDEX idx_webhooks_agent ON webhooks(agent_id);
+CREATE INDEX idx_webhooks_event_type ON webhooks(event_type) WHERE event_type IS NOT NULL;
 
 -- 5.2. Webhook Logs
 CREATE TABLE IF NOT EXISTS webhook_logs (
@@ -314,12 +478,16 @@ CREATE TABLE IF NOT EXISTS webhook_logs (
   payload JSONB,
   response_status INTEGER,
   response_body TEXT,
+  status_code INTEGER,
+  request_payload JSONB,
+  response_payload JSONB,
   error_message TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE INDEX idx_webhook_logs_webhook ON webhook_logs(webhook_id);
 CREATE INDEX idx_webhook_logs_created_at ON webhook_logs(created_at DESC);
+CREATE INDEX idx_webhook_logs_status_code ON webhook_logs(status_code) WHERE status_code IS NOT NULL;
 
 -- 5.3. Subscription Plans
 CREATE TABLE IF NOT EXISTS subscription_plans (
@@ -441,6 +609,13 @@ CREATE TRIGGER update_conversations_updated_at BEFORE UPDATE ON conversations FO
 CREATE TRIGGER update_messages_updated_at BEFORE UPDATE ON messages FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_documents_updated_at BEFORE UPDATE ON documents FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_knowledge_bases_updated_at BEFORE UPDATE ON knowledge_bases FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_agent_rules_updated_at BEFORE UPDATE ON agent_rules FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_agent_behaviors_updated_at BEFORE UPDATE ON agent_behaviors FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_agent_sessions_updated_at BEFORE UPDATE ON agent_sessions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_message_feedback_updated_at BEFORE UPDATE ON message_feedback FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_approved_responses_updated_at BEFORE UPDATE ON approved_responses FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_vector_store_files_updated_at BEFORE UPDATE ON vector_store_files FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_assistant_runs_updated_at BEFORE UPDATE ON assistant_runs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_scans_updated_at BEFORE UPDATE ON scans FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_scan_steps_updated_at BEFORE UPDATE ON scan_steps FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_webhooks_updated_at BEFORE UPDATE ON webhooks FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -774,6 +949,139 @@ CREATE POLICY "Super admins podem ver audit logs"
     )
   );
 
+-- 7.18. Agent Rules
+ALTER TABLE agent_rules ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Membros veem regras dos agentes das suas organizações"
+  ON agent_rules FOR SELECT
+  USING (
+    agent_id IN (
+      SELECT id FROM agents
+      WHERE organization_id IN (
+        SELECT organization_id FROM organization_memberships
+        WHERE user_id = auth.uid()
+      )
+      OR organization_id IS NULL
+    )
+  );
+
+CREATE POLICY "Membros podem criar regras"
+  ON agent_rules FOR INSERT
+  WITH CHECK (
+    agent_id IN (
+      SELECT id FROM agents
+      WHERE organization_id IN (
+        SELECT organization_id FROM organization_memberships
+        WHERE user_id = auth.uid() AND role IN ('owner', 'admin', 'member')
+      )
+      OR organization_id IS NULL
+    )
+  );
+
+-- 7.19. Agent Behaviors
+ALTER TABLE agent_behaviors ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Membros veem comportamentos dos agentes das suas organizações"
+  ON agent_behaviors FOR SELECT
+  USING (
+    agent_id IN (
+      SELECT id FROM agents
+      WHERE organization_id IN (
+        SELECT organization_id FROM organization_memberships
+        WHERE user_id = auth.uid()
+      )
+      OR organization_id IS NULL
+    )
+  );
+
+-- 7.20. Agent Sessions
+ALTER TABLE agent_sessions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Usuários veem suas próprias sessões"
+  ON agent_sessions FOR SELECT
+  USING (user_id = auth.uid());
+
+CREATE POLICY "Usuários podem criar sessões"
+  ON agent_sessions FOR INSERT
+  WITH CHECK (user_id = auth.uid());
+
+-- 7.21. Agent Analytics
+ALTER TABLE agent_analytics ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Membros veem analytics dos agentes das suas organizações"
+  ON agent_analytics FOR SELECT
+  USING (
+    agent_id IN (
+      SELECT id FROM agents
+      WHERE organization_id IN (
+        SELECT organization_id FROM organization_memberships
+        WHERE user_id = auth.uid()
+      )
+      OR organization_id IS NULL
+    )
+  );
+
+-- 7.22. Message Feedback
+ALTER TABLE message_feedback ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Usuários veem feedback de suas mensagens"
+  ON message_feedback FOR SELECT
+  USING (user_id = auth.uid());
+
+CREATE POLICY "Usuários podem criar feedback"
+  ON message_feedback FOR INSERT
+  WITH CHECK (user_id = auth.uid());
+
+-- 7.23. Approved Responses
+ALTER TABLE approved_responses ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Usuários veem respostas aprovadas de suas conversas"
+  ON approved_responses FOR SELECT
+  USING (
+    conversation_id IN (
+      SELECT id FROM conversations WHERE user_id = auth.uid()
+    )
+  );
+
+-- 7.24. Vector Store Files
+ALTER TABLE vector_store_files ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Membros veem arquivos dos agentes das suas organizações"
+  ON vector_store_files FOR SELECT
+  USING (
+    agent_id IN (
+      SELECT id FROM agents
+      WHERE organization_id IN (
+        SELECT organization_id FROM organization_memberships
+        WHERE user_id = auth.uid()
+      )
+      OR organization_id IS NULL
+    )
+  );
+
+-- 7.25. Assistant Runs
+ALTER TABLE assistant_runs ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Membros veem runs dos agentes das suas organizações"
+  ON assistant_runs FOR SELECT
+  USING (
+    agent_id IN (
+      SELECT id FROM agents
+      WHERE organization_id IN (
+        SELECT organization_id FROM organization_memberships
+        WHERE user_id = auth.uid()
+      )
+      OR organization_id IS NULL
+    )
+  );
+
+-- 7.26. Password Reset Tokens
+ALTER TABLE password_reset_tokens ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Usuários veem seus próprios tokens"
+  ON password_reset_tokens FOR SELECT
+  USING (user_id = auth.uid());
+
 -- ============================================
 -- 8. DADOS INICIAIS (SEED)
 -- ============================================
@@ -838,9 +1146,24 @@ COMMENT ON TABLE agents IS 'Agentes de IA do sistema';
 COMMENT ON TABLE conversations IS 'Conversas entre usuários e agentes';
 COMMENT ON TABLE messages IS 'Mensagens das conversas';
 COMMENT ON TABLE documents IS 'Documentos gerados pelo sistema';
+COMMENT ON TABLE knowledge_bases IS 'Bases de conhecimento dos agentes';
+COMMENT ON TABLE agent_rules IS 'Regras configuráveis para agentes';
+COMMENT ON TABLE agent_behaviors IS 'Comportamentos configuráveis para agentes';
+COMMENT ON TABLE agent_sessions IS 'Sessões de uso de agentes';
+COMMENT ON TABLE agent_analytics IS 'Métricas e analytics de agentes';
+COMMENT ON TABLE message_feedback IS 'Feedback dos usuários sobre mensagens';
+COMMENT ON TABLE approved_responses IS 'Respostas aprovadas pelos usuários';
+COMMENT ON TABLE vector_store_files IS 'Arquivos sincronizados com OpenAI Vector Store';
+COMMENT ON TABLE assistant_runs IS 'Execuções de OpenAI Assistants';
+COMMENT ON TABLE password_reset_tokens IS 'Tokens para recuperação de senha';
 COMMENT ON TABLE scans IS 'Jornadas Scan (workflows completos)';
 COMMENT ON TABLE scan_steps IS 'Etapas individuais de uma jornada scan (agent, document, autonomous, synthetic)';
 COMMENT ON TABLE scan_step_documents IS 'Vínculos entre documentos e etapas da jornada scan';
+COMMENT ON COLUMN agents.openai_thread_id IS 'ID do thread OpenAI para conversas contínuas';
+COMMENT ON COLUMN agents.last_session IS 'Data da última sessão do agente';
+COMMENT ON COLUMN agents.openai_synced_at IS 'Data da última sincronização com OpenAI';
+COMMENT ON COLUMN organizations.owner_id IS 'ID do usuário dono da organização';
+COMMENT ON COLUMN webhooks.event_type IS 'Tipo de evento (campo auxiliar além de events[])';
 COMMENT ON COLUMN scan_steps.step_type IS 'Tipo de etapa: agent (conversacional), document (manual), autonomous (automático), synthetic (compilação)';
 COMMENT ON COLUMN scan_steps.depends_on_step_ids IS 'IDs das etapas que devem estar completas antes desta';
 COMMENT ON COLUMN scan_steps.input_document_ids IS 'IDs dos documentos que servem como input para esta etapa';
