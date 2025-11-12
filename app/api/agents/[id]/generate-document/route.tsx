@@ -27,21 +27,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const supabase = createServiceClient()
 
-    const { data: membership } = await supabase
-      .from("organization_memberships")
-      .select("organization_id")
-      .eq("user_id", user.id)
-      .maybeSingle()
-
-    const organizationId = membership?.organization_id
-
-    console.log("[v0] [GEN-DOC] Organization ID:", organizationId)
-
-    if (!organizationId) {
-      console.error("[v0] [GEN-DOC] No organization found for user")
-      return Response.json({ error: "No organization selected" }, { status: 400 })
-    }
-
     const body = await req.json()
     const { conversationId, approvedMessageIds } = body
 
@@ -54,6 +39,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return Response.json({ error: "Conversation ID and approved message IDs are required" }, { status: 400 })
     }
 
+    // Get conversation first to check if it has organization_id
     const { data: conversation, error: convError } = await supabase
       .from("conversations")
       .select("*")
@@ -63,6 +49,54 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (convError || !conversation) {
       console.error("[v0] [GEN-DOC] Conversation not found:", convError)
       return Response.json({ error: "Conversation not found" }, { status: 404 })
+    }
+
+    // Try to get organization_id from conversation first, then from scan, then from user membership
+    let organizationId = conversation.organization_id
+
+    if (!organizationId) {
+      console.log("[v0] [GEN-DOC] No organization_id in conversation, trying scan_step...")
+      // Try to get from scan_step if conversation is linked to a scan
+      const { data: scanStep, error: scanStepError } = await supabase
+        .from("scan_steps")
+        .select("scan_id")
+        .eq("conversation_id", conversationId)
+        .maybeSingle()
+
+      if (scanStep && !scanStepError && scanStep.scan_id) {
+        console.log("[v0] [GEN-DOC] Found scan_step, fetching scan organization_id...")
+        const { data: scan, error: scanError } = await supabase
+          .from("scans")
+          .select("organization_id")
+          .eq("id", scanStep.scan_id)
+          .maybeSingle()
+
+        if (scan && !scanError && scan.organization_id) {
+          organizationId = scan.organization_id
+          console.log("[v0] [GEN-DOC] Found organization_id from scan:", organizationId)
+        }
+      }
+    }
+
+    if (!organizationId) {
+      console.log("[v0] [GEN-DOC] No organization_id in conversation or scan, trying user membership...")
+      const { data: membership } = await supabase
+        .from("organization_memberships")
+        .select("organization_id")
+        .eq("user_id", user.id)
+        .maybeSingle()
+
+      organizationId = membership?.organization_id
+    }
+
+    console.log("[v0] [GEN-DOC] Organization ID:", organizationId)
+
+    if (!organizationId) {
+      console.error("[v0] [GEN-DOC] No organization found for user, conversation, or scan")
+      return Response.json({ 
+        error: "No organization selected", 
+        details: "User needs to be part of an organization, or conversation/scan must have an organization_id"
+      }, { status: 400 })
     }
 
     const { data: agent } = await supabase.from("agents").select("*").eq("id", agentId).maybeSingle()

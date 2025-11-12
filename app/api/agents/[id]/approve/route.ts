@@ -17,25 +17,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const supabase = createServiceClient()
 
-    const { data: membership } = await supabase
-      .from("organization_memberships")
-      .select("organization_id")
-      .eq("user_id", user.id)
-      .maybeSingle()
-
-    const organizationId = membership?.organization_id
-
-    if (!organizationId) {
-      return Response.json({ error: "No organization selected" }, { status: 400 })
-    }
-
     const { conversationId } = await req.json()
 
     if (!conversationId) {
       return Response.json({ error: "Conversation ID is required" }, { status: 400 })
     }
-    // </CHANGE>
 
+    // Get conversation first to check if it has organization_id
     const { data: conversation, error: convError } = await supabase
       .from("conversations")
       .select("*")
@@ -45,6 +33,52 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (convError || !conversation) {
       console.error("[v0] Conversation not found:", conversationId, convError)
       return Response.json({ error: "Conversation not found. Please start a new conversation." }, { status: 404 })
+    }
+
+    // Try to get organization_id from conversation first, then from scan, then from user membership
+    let organizationId = conversation.organization_id
+
+    if (!organizationId) {
+      console.log("[v0] No organization_id in conversation, trying scan_step...")
+      // Try to get from scan_step if conversation is linked to a scan
+      const { data: scanStep, error: scanStepError } = await supabase
+        .from("scan_steps")
+        .select("scan_id")
+        .eq("conversation_id", conversationId)
+        .maybeSingle()
+
+      if (scanStep && !scanStepError && scanStep.scan_id) {
+        console.log("[v0] Found scan_step, fetching scan organization_id...")
+        const { data: scan, error: scanError } = await supabase
+          .from("scans")
+          .select("organization_id")
+          .eq("id", scanStep.scan_id)
+          .maybeSingle()
+
+        if (scan && !scanError && scan.organization_id) {
+          organizationId = scan.organization_id
+          console.log("[v0] Found organization_id from scan:", organizationId)
+        }
+      }
+    }
+
+    if (!organizationId) {
+      console.log("[v0] No organization_id in conversation or scan, trying user membership...")
+      const { data: membership } = await supabase
+        .from("organization_memberships")
+        .select("organization_id")
+        .eq("user_id", user.id)
+        .maybeSingle()
+
+      organizationId = membership?.organization_id
+    }
+
+    if (!organizationId) {
+      console.error("[v0] No organization found for user, conversation, or scan")
+      return Response.json({ 
+        error: "No organization selected", 
+        details: "User needs to be part of an organization, or conversation/scan must have an organization_id"
+      }, { status: 400 })
     }
 
     const { data: messages } = await supabase

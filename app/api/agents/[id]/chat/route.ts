@@ -42,15 +42,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       throw error
     }
 
-    const { data: membership } = await supabase
-      .from("organization_memberships")
-      .select("organization_id")
-      .eq("user_id", user.id)
-      .maybeSingle()
-
-    const organizationId = membership?.organization_id
-    console.log("[v0] Organization ID:", organizationId)
-
     let body
     try {
       body = await req.json()
@@ -75,6 +66,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!agent) {
       console.error("[v0] Agent not found:", agentId)
       return Response.json({ error: "Agent not found" }, { status: 404 })
+    }
+
+    // Try to get organization_id from user membership first
+    const { data: membership } = await supabase
+      .from("organization_memberships")
+      .select("organization_id")
+      .eq("user_id", user.id)
+      .maybeSingle()
+
+    let organizationId = membership?.organization_id
+    console.log("[v0] Organization ID from membership:", organizationId)
+
+    // If no organization from membership, try to get from active scan for this agent
+    if (!organizationId) {
+      console.log("[v0] No organization from membership, trying active scan for agent:", agentId)
+      const { data: activeScan } = await supabase
+        .from("scans")
+        .select("organization_id")
+        .eq("current_agent_id", agentId)
+        .eq("status", "in_progress")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (activeScan?.organization_id) {
+        organizationId = activeScan.organization_id
+        console.log("[v0] Found organization_id from active scan:", organizationId)
+      }
     }
 
     console.log("[v0] Agent found:", agent.name, "Assistant ID:", agent.openai_assistant_id)
@@ -119,13 +138,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         throw error
       }
     } else {
-      const { data: conversation } = await supabase
+      const { data: conversation: existingConversation } = await supabase
         .from("conversations")
-        .select("openai_thread_id")
+        .select("openai_thread_id, organization_id")
         .eq("id", activeConversationId)
         .single()
 
-      threadId = conversation?.openai_thread_id
+      threadId = existingConversation?.openai_thread_id
+
+      // If conversation exists but doesn't have organization_id, try to set it
+      if (existingConversation && !existingConversation.organization_id && organizationId) {
+        console.log("[v0] Updating conversation with organization_id:", organizationId)
+        await supabase
+          .from("conversations")
+          .update({ organization_id: organizationId })
+          .eq("id", activeConversationId)
+      }
 
       if (!threadId) {
         const thread = await createThread()

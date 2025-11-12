@@ -345,7 +345,7 @@ Após o deploy, verifique no dashboard da Vercel:
 4. Verifique redirecionamento após login
 
 #### b) Teste de Agentes
-1. Navegue para **/agentes**
+1. Navegue para **/dashboard/agentes**
 2. Verifique listagem de agentes
 3. Clique em um agente e inicie conversa
 4. Envie uma mensagem e aguarde resposta
