@@ -159,29 +159,40 @@ export default function JornadaScanPage() {
 
   const fetchProgress = async () => {
     try {
+      console.log("[v0] === Fetching progress ===")
       const response = await fetch("/api/journey/progress?journeyType=scan")
       if (response.ok) {
         const data = await response.json()
         const scanStepsData = data.scanSteps || []
         setCompletedSteps(data.completedSteps || [])
         setScanSteps(scanStepsData)
-        console.log("[v0] Loaded progress:", data.completedSteps)
-        console.log("[v0] Loaded scan steps:", scanStepsData.length)
+        console.log("[v0] ✅ Loaded progress - Completed steps:", data.completedSteps)
+        console.log("[v0] ✅ Loaded scan steps:", scanStepsData.length)
+        console.log("[v0] Scan steps details:", scanStepsData.map((s: any) => ({
+          step_order: s.step_order,
+          step_type: s.step_type,
+          agent_id: s.agent_id,
+          status: s.status,
+        })))
 
         // Check if scan has less than 6 steps and migrate if needed
         if (scanStepsData.length > 0 && scanStepsData.length < 6 && !isMigrating) {
-          console.log("[v0] Scan has less than 6 steps, migrating...")
+          console.log("[v0] ⚠️ Scan has less than 6 steps (", scanStepsData.length, "), migrating...")
           setIsMigrating(true)
           await migrateScan()
           setIsMigrating(false)
+        } else if (scanStepsData.length === 0) {
+          console.log("[v0] ⚠️ No scan steps found - scan will be created automatically if agents are available")
+        } else if (scanStepsData.length >= 6) {
+          console.log("[v0] ✅ Scan has", scanStepsData.length, "steps - migration not needed")
         }
       } else {
-        console.error("[v0] Error fetching progress, status:", response.status)
+        console.error("[v0] ❌ Error fetching progress, status:", response.status)
         setCompletedSteps([])
         setScanSteps([])
       }
     } catch (error) {
-      console.error("[v0] Error fetching progress:", error)
+      console.error("[v0] ❌ Error fetching progress:", error)
       setCompletedSteps([])
       setScanSteps([])
     }
@@ -318,36 +329,45 @@ export default function JornadaScanPage() {
     
     console.log("[v0] === ETAPAS CONSTRUÍDAS DOS SCAN_STEPS ===")
     console.log("[v0] Total de etapas:", stepsFromScan.length)
+    console.log("[v0] Etapas:", stepsFromScan.map((s) => `${s.step}. ${s.title} (${s.stepType})`))
+    
+    // Verificar se temos a etapa 2 (SCAN Clarity)
+    const hasStep2 = stepsFromScan.some((s) => s.step === 2 && s.stepType === "document")
+    console.log("[v0] Tem etapa 2 (SCAN Clarity)?", hasStep2)
+    
+    if (!hasStep2 && stepsFromScan.length < 6) {
+      console.warn("[v0] ⚠️ ATENÇÃO: Etapa 2 (SCAN Clarity) não encontrada! Total de etapas:", stepsFromScan.length)
+    }
+    
     setSteps(stepsFromScan)
   }
 
   // Atualizar steps quando completedSteps, scanSteps ou agents mudarem
   useEffect(() => {
-    // Se temos scan_steps E agentes, construir steps a partir dos scan_steps (inclui etapa de documento manual)
-    if (scanSteps.length > 0 && agents.length > 0) {
-      console.log("[v0] Building steps from scan_steps:", scanSteps.length, "steps")
-      buildStepsFromScanSteps(scanSteps, completedSteps, agents)
-    } else if (scanSteps.length === 0 && agents.length > 0) {
-      // Se não temos scan_steps mas temos agentes, tentar criar scan
-      console.log("[v0] No scan_steps found but agents exist, will create scan if needed")
-      // O scan será criado em fetchProgress quando detectar ausência de scan_steps
-    } else if (steps.length > 0 && scanSteps.length === 0) {
-      // Se não temos scan_steps mas temos steps dos agentes (fallback), atualizar apenas status
-      console.log("[v0] Updating existing steps status")
-      setSteps((prevSteps) =>
-        prevSteps.map((step, index) => {
-          const isCompleted = completedSteps.includes(step.id)
-          const previousStepCompleted = index === 0 || completedSteps.includes(prevSteps[index - 1].id)
+    console.log("[v0] === useEffect: Atualizando steps ===")
+    console.log("[v0] scanSteps.length:", scanSteps.length)
+    console.log("[v0] agents.length:", agents.length)
+    console.log("[v0] loading:", loading)
+    console.log("[v0] isMigrating:", isMigrating)
 
-          return {
-            ...step,
-            completed: isCompleted,
-            locked: !previousStepCompleted,
-          }
-        }),
-      )
+    // PRIORIDADE 1: Se temos scan_steps, SEMPRE construir steps a partir deles (inclui etapa de documento manual)
+    if (scanSteps.length > 0) {
+      console.log("[v0] ✅ Building steps from scan_steps:", scanSteps.length, "steps")
+      if (agents.length > 0) {
+        buildStepsFromScanSteps(scanSteps, completedSteps, agents)
+      } else {
+        console.log("[v0] ⏳ Waiting for agents to load before building steps from scan_steps")
+        // Aguardar agentes carregarem - steps serão construídos quando agentes estiverem disponíveis
+      }
+    } 
+    // PRIORIDADE 2: Se não temos scan_steps mas temos agentes e não estamos carregando/migrando, limpar steps
+    else if (scanSteps.length === 0 && !loading && !isMigrating) {
+      console.log("[v0] ⚠️ No scan_steps found, clearing steps")
+      // Limpar steps quando não há scan_steps (evita mostrar steps incorretos)
+      setSteps([])
+      // O scan será criado automaticamente pelo useEffect que monitora agents.length e scanSteps.length
     }
-  }, [completedSteps, scanSteps, agents])
+  }, [completedSteps, scanSteps, agents, loading, isMigrating])
 
   const fetchAgents = async () => {
     console.log("[v0] === INICIANDO BUSCA DE AGENTES ===")
@@ -365,65 +385,13 @@ export default function JornadaScanPage() {
         console.log("[v0] === AGENTES RECEBIDOS ===")
         console.log("[v0] Total de agentes:", fetchedAgents.length)
         console.log("[v0] Agentes da Jornada Scan:", jornadaScanAgents.length)
+        console.log("[v0] Agentes:", jornadaScanAgents.map((a: Agent) => a.name))
 
+        // Apenas definir os agentes - NÃO criar steps a partir deles
+        // Os steps serão criados a partir dos scan_steps quando disponíveis
         setAgents(jornadaScanAgents)
-
-        if (jornadaScanAgents.length > 0) {
-          const agentMap = new Map(jornadaScanAgents.map((a: Agent) => [a.id, a]))
-          const agentsWithPredecessors = new Set(jornadaScanAgents.map((a: Agent) => a.next_agent_id).filter(Boolean))
-
-          const firstAgent = jornadaScanAgents.find((a: Agent) => !agentsWithPredecessors.has(a.id))
-
-          if (firstAgent) {
-            const orderedSteps: JourneyStep[] = []
-            let currentAgent: Agent | undefined = firstAgent
-            let stepNumber = 1
-
-            while (currentAgent && stepNumber <= 10) {
-              const description = currentAgent.description || `Passo ${stepNumber} da jornada`
-              const displayDescription = description.length > 150 ? description.substring(0, 150) + "..." : description
-
-              orderedSteps.push({
-                id: `scan-${stepNumber}`,
-                step: stepNumber,
-                title: currentAgent.name,
-                agentName: currentAgent.name,
-                agentId: currentAgent.id,
-                description: displayDescription,
-                agent: currentAgent,
-                completed: false,
-                locked: stepNumber > 1,
-              })
-
-              currentAgent = currentAgent.next_agent_id ? agentMap.get(currentAgent.next_agent_id) : undefined
-              stepNumber++
-            }
-
-            console.log("[v0] === FLUXO CONSTRUÍDO ===")
-            console.log("[v0] Total de passos:", orderedSteps.length)
-
-            setSteps(orderedSteps)
-          } else {
-            const fallbackSteps = jornadaScanAgents.slice(0, 6).map((agent: Agent, index: number) => {
-              const description = agent.description || `Passo ${index + 1} da jornada`
-              const displayDescription = description.length > 150 ? description.substring(0, 150) + "..." : description
-
-              return {
-                id: `scan-${index + 1}`,
-                step: index + 1,
-                title: agent.name,
-                agentName: agent.name,
-                agentId: agent.id,
-                description: displayDescription,
-                agent,
-                completed: false,
-                locked: index > 0,
-              }
-            })
-
-            setSteps(fallbackSteps)
-          }
-        }
+      } else {
+        console.error("[v0] Error fetching agents, status:", response.status)
       }
     } catch (error) {
       console.error("[v0] ❌ ERRO AO BUSCAR AGENTES:", error)
@@ -508,135 +476,156 @@ export default function JornadaScanPage() {
           </p>
         </div>
 
-        <div className="relative">
-          <div className="absolute top-6 left-0 right-0 h-1 bg-gray-200">
-            <div
-              className="h-full bg-[#7C3AED] transition-all duration-500"
-              style={{
-                width: `${(steps.filter((s) => s.completed).length / steps.length) * 100}%`,
-              }}
-            />
-          </div>
-          <div className="relative flex justify-between">
-            {steps.map((step, index) => (
-              <div key={step.id} className="flex flex-col items-center">
+        {steps.length > 0 ? (
+          <>
+            <div className="relative">
+              <div className="absolute top-6 left-0 right-0 h-1 bg-gray-200">
                 <div
+                  className="h-full bg-[#7C3AED] transition-all duration-500"
+                  style={{
+                    width: `${(steps.filter((s) => s.completed).length / steps.length) * 100}%`,
+                  }}
+                />
+              </div>
+              <div className="relative flex justify-between">
+                {steps.map((step, index) => (
+                  <div key={step.id} className="flex flex-col items-center">
+                    <div
+                      className={cn(
+                        "flex h-12 w-12 items-center justify-center rounded-full border-4 bg-white transition-all",
+                        step.completed
+                          ? "border-[#7C3AED] text-[#7C3AED]"
+                          : step.locked
+                            ? "border-gray-200 text-gray-300"
+                            : "border-[#7C3AED] text-[#7C3AED] ring-4 ring-[#7C3AED]/20",
+                      )}
+                    >
+                      {step.completed ? <CheckCircleIcon /> : step.locked ? <LockIcon /> : <CircleIcon />}
+                    </div>
+                    <div className="mt-2 text-xs font-semibold text-gray-500">Passo {step.step}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {steps.map((step) => (
+                <div
+                  key={step.id}
                   className={cn(
-                    "flex h-12 w-12 items-center justify-center rounded-full border-4 bg-white transition-all",
+                    "group relative overflow-hidden rounded-2xl border-2 bg-white p-6 transition-all",
                     step.completed
-                      ? "border-[#7C3AED] text-[#7C3AED]"
+                      ? "border-green-200 bg-green-50/50"
                       : step.locked
-                        ? "border-gray-200 text-gray-300"
-                        : "border-[#7C3AED] text-[#7C3AED] ring-4 ring-[#7C3AED]/20",
+                        ? "border-gray-200 opacity-60"
+                        : "border-[#7C3AED] shadow-lg shadow-[#7C3AED]/10 hover:shadow-xl hover:shadow-[#7C3AED]/20",
                   )}
                 >
-                  {step.completed ? <CheckCircleIcon /> : step.locked ? <LockIcon /> : <CircleIcon />}
-                </div>
-                <div className="mt-2 text-xs font-semibold text-gray-500">Passo {step.step}</div>
-              </div>
-            ))}
-          </div>
-        </div>
+                  <div
+                    className={cn(
+                      "absolute -right-4 -top-4 flex h-16 w-16 items-center justify-center rounded-full text-2xl font-bold",
+                      step.completed
+                        ? "bg-green-100 text-green-600"
+                        : step.locked
+                          ? "bg-gray-100 text-gray-400"
+                          : "bg-[#7C3AED]/10 text-[#7C3AED]",
+                    )}
+                  >
+                    {step.step}
+                  </div>
 
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {steps.map((step) => (
-            <div
-              key={step.id}
-              className={cn(
-                "group relative overflow-hidden rounded-2xl border-2 bg-white p-6 transition-all",
-                step.completed
-                  ? "border-green-200 bg-green-50/50"
-                  : step.locked
-                    ? "border-gray-200 opacity-60"
-                    : "border-[#7C3AED] shadow-lg shadow-[#7C3AED]/10 hover:shadow-xl hover:shadow-[#7C3AED]/20",
-              )}
-            >
-              <div
-                className={cn(
-                  "absolute -right-4 -top-4 flex h-16 w-16 items-center justify-center rounded-full text-2xl font-bold",
-                  step.completed
-                    ? "bg-green-100 text-green-600"
-                    : step.locked
-                      ? "bg-gray-100 text-gray-400"
-                      : "bg-[#7C3AED]/10 text-[#7C3AED]",
-                )}
-              >
-                {step.step}
-              </div>
-
-              <div className="mb-4 flex items-center gap-2">
-                {step.completed ? (
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
-                    <CheckCircleIcon />
-                  </div>
-                ) : step.locked ? (
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
-                    <LockIcon />
-                  </div>
-                ) : (
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#7C3AED]/10">
-                    <SparklesIcon />
-                  </div>
-                )}
-                <div className="flex flex-col gap-1">
-                  {step.agent ? (
-                    <>
-                      <div className="text-xs text-gray-500">
-                        {step.agent.status === "active" ? "✓ Ativo" : "⚠ Inativo"}
+                  <div className="mb-4 flex items-center gap-2">
+                    {step.completed ? (
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
+                        <CheckCircleIcon />
                       </div>
-                      {step.agent.is_passive && <div className="text-xs text-purple-600 font-medium">🤖 Automático</div>}
-                    </>
-                  ) : step.stepTypeDisplay ? (
-                    <div className="text-xs text-purple-600 font-medium">{step.stepTypeDisplay}</div>
-                  ) : null}
+                    ) : step.locked ? (
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gray-100">
+                        <LockIcon />
+                      </div>
+                    ) : (
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#7C3AED]/10">
+                        <SparklesIcon />
+                      </div>
+                    )}
+                    <div className="flex flex-col gap-1">
+                      {step.agent ? (
+                        <>
+                          <div className="text-xs text-gray-500">
+                            {step.agent.status === "active" ? "✓ Ativo" : "⚠ Inativo"}
+                          </div>
+                          {step.agent.is_passive && <div className="text-xs text-purple-600 font-medium">🤖 Automático</div>}
+                        </>
+                      ) : step.stepTypeDisplay ? (
+                        <div className="text-xs text-purple-600 font-medium">{step.stepTypeDisplay}</div>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <h3 className="mb-3 text-xl font-bold text-gray-900">{step.title}</h3>
+                  <p className="mb-6 text-sm leading-relaxed text-gray-600">{step.description}</p>
+
+                  <Button
+                    onClick={() => handleStartAgent(step.agentId, step.id)}
+                    disabled={step.locked}
+                    className={cn(
+                      "w-full",
+                      step.completed
+                        ? "bg-green-600 hover:bg-green-700"
+                        : step.locked
+                          ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                          : "bg-[#7C3AED] hover:bg-[#6D28D9]",
+                    )}
+                  >
+                    {step.completed
+                      ? "Revisar"
+                      : step.locked
+                        ? "Bloqueado"
+                        : step.stepType === "document"
+                          ? "Fazer Upload"
+                          : step.stepType === "autonomous" || step.stepType === "synthetic"
+                            ? "Aguardando"
+                            : step.agent?.is_passive
+                              ? "Executar"
+                              : "Iniciar"}
+                  </Button>
+
+                  {step.locked && (
+                    <p className="mt-3 text-center text-xs text-gray-500">Complete o passo anterior para desbloquear</p>
+                  )}
                 </div>
+              ))}
+            </div>
+
+            {steps.every((s) => s.completed) && (
+              <div className="rounded-2xl border-2 border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 p-8 text-center">
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
+                  <CheckCircleIcon />
+                </div>
+                <h2 className="mb-2 text-2xl font-bold text-gray-900">Jornada Concluída!</h2>
+                <p className="mb-6 text-gray-600">
+                  Parabéns! Você completou toda a Jornada Scan. Agora você pode acessar seu dossiê inteligente completo.
+                </p>
+                <Button className="bg-[#7C3AED] hover:bg-[#6D28D9]">Ver Dossiê Completo</Button>
               </div>
-
-              <h3 className="mb-3 text-xl font-bold text-gray-900">{step.title}</h3>
-              <p className="mb-6 text-sm leading-relaxed text-gray-600">{step.description}</p>
-
-              <Button
-                onClick={() => handleStartAgent(step.agentId, step.id)}
-                disabled={step.locked}
-                className={cn(
-                  "w-full",
-                  step.completed
-                    ? "bg-green-600 hover:bg-green-700"
-                    : step.locked
-                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                      : "bg-[#7C3AED] hover:bg-[#6D28D9]",
-                )}
-              >
-                {step.completed
-                  ? "Revisar"
-                  : step.locked
-                    ? "Bloqueado"
-                    : step.stepType === "document"
-                      ? "Fazer Upload"
-                      : step.stepType === "autonomous" || step.stepType === "synthetic"
-                        ? "Aguardando"
-                        : step.agent?.is_passive
-                          ? "Executar"
-                          : "Iniciar"}
-              </Button>
-
-              {step.locked && (
-                <p className="mt-3 text-center text-xs text-gray-500">Complete o passo anterior para desbloquear</p>
-              )}
+            )}
+          </>
+        ) : (
+          <div className="rounded-2xl border-2 border-gray-200 bg-gray-50 p-8 text-center">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gray-100">
+              <CircleIcon />
             </div>
-          ))}
-        </div>
-
-        {steps.length > 0 && steps.every((s) => s.completed) && (
-          <div className="rounded-2xl border-2 border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 p-8 text-center">
-            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
-              <CheckCircleIcon />
-            </div>
-            <h2 className="mb-2 text-2xl font-bold text-gray-900">Jornada Concluída!</h2>
+            <h2 className="mb-2 text-2xl font-bold text-gray-900">Carregando Jornada Scan</h2>
             <p className="mb-6 text-gray-600">
-              Parabéns! Você completou toda a Jornada Scan. Agora você pode acessar seu dossiê inteligente completo.
+              {loading || isMigrating
+                ? "Preparando sua jornada..."
+                : "Aguardando criação da jornada. Isso pode levar alguns instantes."}
             </p>
-            <Button className="bg-[#7C3AED] hover:bg-[#6D28D9]">Ver Dossiê Completo</Button>
+            {!loading && !isMigrating && agents.length > 0 && (
+              <Button onClick={createScan} className="bg-[#7C3AED] hover:bg-[#6D28D9]">
+                Criar Jornada Scan
+              </Button>
+            )}
           </div>
         )}
       </div>
