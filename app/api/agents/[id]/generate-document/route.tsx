@@ -124,21 +124,80 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
+    // Try to find ANY active scan for this agent (even without conversation link)
+    if (!organizationId) {
+      console.log("[v0] [GEN-DOC] Trying to find ANY active scan for this agent...")
+      
+      // Find all scan_steps for this agent
+      const { data: allScanSteps } = await supabase
+        .from("scan_steps")
+        .select("scan_id")
+        .eq("agent_id", agentId)
+
+      if (allScanSteps && allScanSteps.length > 0) {
+        // Get unique scan_ids
+        const scanIds = [...new Set(allScanSteps.map(s => s.scan_id))]
+        console.log("[v0] [GEN-DOC] Found", scanIds.length, "scan(s) with this agent")
+        
+        // Try to find an active scan
+        for (const scanId of scanIds) {
+          const { data: scan } = await supabase
+            .from("scans")
+            .select("organization_id, status")
+            .eq("id", scanId)
+            .eq("status", "in_progress")
+            .maybeSingle()
+
+          if (scan && scan.organization_id) {
+            organizationId = scan.organization_id
+            console.log("[v0] [GEN-DOC] Found organization_id from scan:", scanId, organizationId)
+            
+            // Try to link conversation to scan_step
+            const { data: scanStep } = await supabase
+              .from("scan_steps")
+              .select("id, conversation_id")
+              .eq("scan_id", scanId)
+              .eq("agent_id", agentId)
+              .maybeSingle()
+
+            if (scanStep && !scanStep.conversation_id) {
+              await supabase
+                .from("scan_steps")
+                .update({
+                  conversation_id: conversationId,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", scanStep.id)
+              console.log("[v0] [GEN-DOC] Linked conversation to scan_step")
+            }
+            break
+          }
+        }
+      }
+    }
+
     // Try user membership
     if (!organizationId) {
       console.log("[v0] [GEN-DOC] No organization_id in conversation or scan, trying user membership...")
-      const { data: membership } = await supabase
+      const { data: membership, error: membershipError } = await supabase
         .from("organization_memberships")
         .select("organization_id")
         .eq("user_id", user.id)
         .maybeSingle()
 
+      if (membershipError) {
+        console.error("[v0] [GEN-DOC] Error fetching membership:", membershipError)
+      }
+
       organizationId = membership?.organization_id
+      if (organizationId) {
+        console.log("[v0] [GEN-DOC] Found organization_id from user membership:", organizationId)
+      }
     }
 
-    // Try active scan for this agent (last resort)
+    // Try active scan for this agent (last resort - by current_agent_id)
     if (!organizationId) {
-      console.log("[v0] [GEN-DOC] Trying active scan for agent as last resort...")
+      console.log("[v0] [GEN-DOC] Trying active scan for agent as last resort (current_agent_id)...")
       const { data: activeScan } = await supabase
         .from("scans")
         .select("organization_id")
