@@ -301,8 +301,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
-    console.log("[v0] [GEN-DOC] Agent loaded:", agent.name)
-
     const { data: allMessages } = await supabase
       .from("messages")
       .select("*")
