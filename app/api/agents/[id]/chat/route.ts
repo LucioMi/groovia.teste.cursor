@@ -138,7 +138,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         throw error
       }
     } else {
-      const { data: conversation: existingConversation } = await supabase
+      const { data: existingConversation } = await supabase
         .from("conversations")
         .select("openai_thread_id, organization_id")
         .eq("id", activeConversationId)

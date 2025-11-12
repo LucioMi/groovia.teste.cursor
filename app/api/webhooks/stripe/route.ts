@@ -1,10 +1,20 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { headers } from "next/headers"
 import type Stripe from "stripe"
-import { stripe } from "@/lib/stripe"
-import { updateOrganizationSubscription } from "@/lib/subscriptions"
 
-const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!
+// Lazy import para evitar execução durante build
+async function getStripe() {
+  const { getStripe: getStripeClient } = await import("@/lib/stripe")
+  return getStripeClient()
+}
+
+async function updateOrganizationSubscription(organizationId: string, data: any) {
+  const { updateOrganizationSubscription: updateSub } = await import("@/lib/subscriptions")
+  return updateSub(organizationId, data)
+}
+
+export const dynamic = "force-dynamic"
+export const runtime = "nodejs"
 
 export async function POST(req: NextRequest) {
   // Verificar se Stripe está configurado
@@ -14,6 +24,9 @@ export async function POST(req: NextRequest) {
       { status: 503 }
     )
   }
+
+  const stripe = await getStripe()
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
 
   const body = await req.text()
   const headersList = await headers()
