@@ -77,6 +77,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_rules_priority ON agent_rules(agent_id, pri
 CREATE INDEX IF NOT EXISTS idx_agent_rules_active ON agent_rules(agent_id, is_active) WHERE is_active = true;
 
 -- Trigger para updated_at
+DROP TRIGGER IF EXISTS update_agent_rules_updated_at ON agent_rules;
 CREATE TRIGGER update_agent_rules_updated_at 
 BEFORE UPDATE ON agent_rules 
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -98,6 +99,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_behaviors_agent_id ON agent_behaviors(agent
 CREATE INDEX IF NOT EXISTS idx_agent_behaviors_active ON agent_behaviors(agent_id, is_active) WHERE is_active = true;
 
 -- Trigger para updated_at
+DROP TRIGGER IF EXISTS update_agent_behaviors_updated_at ON agent_behaviors;
 CREATE TRIGGER update_agent_behaviors_updated_at 
 BEFORE UPDATE ON agent_behaviors 
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -122,6 +124,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_sessions_org_id ON agent_sessions(organizat
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_started_at ON agent_sessions(started_at DESC);
 
 -- Trigger para updated_at
+DROP TRIGGER IF EXISTS update_agent_sessions_updated_at ON agent_sessions;
 CREATE TRIGGER update_agent_sessions_updated_at 
 BEFORE UPDATE ON agent_sessions 
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -158,6 +161,7 @@ CREATE INDEX IF NOT EXISTS idx_message_feedback_user_id ON message_feedback(user
 CREATE INDEX IF NOT EXISTS idx_message_feedback_type ON message_feedback(feedback_type);
 
 -- Trigger para updated_at
+DROP TRIGGER IF EXISTS update_message_feedback_updated_at ON message_feedback;
 CREATE TRIGGER update_message_feedback_updated_at 
 BEFORE UPDATE ON message_feedback 
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -181,6 +185,7 @@ CREATE INDEX IF NOT EXISTS idx_approved_responses_user_id ON approved_responses(
 CREATE INDEX IF NOT EXISTS idx_approved_responses_order ON approved_responses(conversation_id, order_index);
 
 -- Trigger para updated_at
+DROP TRIGGER IF EXISTS update_approved_responses_updated_at ON approved_responses;
 CREATE TRIGGER update_approved_responses_updated_at 
 BEFORE UPDATE ON approved_responses 
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -207,6 +212,7 @@ CREATE INDEX IF NOT EXISTS idx_vector_store_files_vector_store_id ON vector_stor
 CREATE INDEX IF NOT EXISTS idx_vector_store_files_status ON vector_store_files(status);
 
 -- Trigger para updated_at
+DROP TRIGGER IF EXISTS update_vector_store_files_updated_at ON vector_store_files;
 CREATE TRIGGER update_vector_store_files_updated_at 
 BEFORE UPDATE ON vector_store_files 
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -233,6 +239,7 @@ CREATE INDEX IF NOT EXISTS idx_assistant_runs_status ON assistant_runs(status);
 CREATE INDEX IF NOT EXISTS idx_assistant_runs_created_at ON assistant_runs(created_at DESC);
 
 -- Trigger para updated_at
+DROP TRIGGER IF EXISTS update_assistant_runs_updated_at ON assistant_runs;
 CREATE TRIGGER update_assistant_runs_updated_at 
 BEFORE UPDATE ON assistant_runs 
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -258,6 +265,7 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_used ON password_reset_toke
 -- 3.1. Agent Rules
 ALTER TABLE agent_rules ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Membros veem regras dos agentes das suas organizações" ON agent_rules;
 CREATE POLICY "Membros veem regras dos agentes das suas organizações"
   ON agent_rules FOR SELECT
   USING (
@@ -271,6 +279,7 @@ CREATE POLICY "Membros veem regras dos agentes das suas organizações"
     )
   );
 
+DROP POLICY IF EXISTS "Membros podem criar regras" ON agent_rules;
 CREATE POLICY "Membros podem criar regras"
   ON agent_rules FOR INSERT
   WITH CHECK (
@@ -287,6 +296,7 @@ CREATE POLICY "Membros podem criar regras"
 -- 3.2. Agent Behaviors
 ALTER TABLE agent_behaviors ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Membros veem comportamentos dos agentes das suas organizações" ON agent_behaviors;
 CREATE POLICY "Membros veem comportamentos dos agentes das suas organizações"
   ON agent_behaviors FOR SELECT
   USING (
@@ -303,10 +313,12 @@ CREATE POLICY "Membros veem comportamentos dos agentes das suas organizações"
 -- 3.3. Agent Sessions
 ALTER TABLE agent_sessions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Usuários veem suas próprias sessões" ON agent_sessions;
 CREATE POLICY "Usuários veem suas próprias sessões"
   ON agent_sessions FOR SELECT
   USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "Usuários podem criar sessões" ON agent_sessions;
 CREATE POLICY "Usuários podem criar sessões"
   ON agent_sessions FOR INSERT
   WITH CHECK (user_id = auth.uid());
@@ -314,6 +326,7 @@ CREATE POLICY "Usuários podem criar sessões"
 -- 3.4. Agent Analytics
 ALTER TABLE agent_analytics ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Membros veem analytics dos agentes das suas organizações" ON agent_analytics;
 CREATE POLICY "Membros veem analytics dos agentes das suas organizações"
   ON agent_analytics FOR SELECT
   USING (
@@ -330,10 +343,12 @@ CREATE POLICY "Membros veem analytics dos agentes das suas organizações"
 -- 3.5. Message Feedback
 ALTER TABLE message_feedback ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Usuários veem feedback de suas mensagens" ON message_feedback;
 CREATE POLICY "Usuários veem feedback de suas mensagens"
   ON message_feedback FOR SELECT
   USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS "Usuários podem criar feedback" ON message_feedback;
 CREATE POLICY "Usuários podem criar feedback"
   ON message_feedback FOR INSERT
   WITH CHECK (user_id = auth.uid());
@@ -341,6 +356,7 @@ CREATE POLICY "Usuários podem criar feedback"
 -- 3.6. Approved Responses
 ALTER TABLE approved_responses ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Usuários veem respostas aprovadas de suas conversas" ON approved_responses;
 CREATE POLICY "Usuários veem respostas aprovadas de suas conversas"
   ON approved_responses FOR SELECT
   USING (
@@ -352,6 +368,7 @@ CREATE POLICY "Usuários veem respostas aprovadas de suas conversas"
 -- 3.7. Vector Store Files
 ALTER TABLE vector_store_files ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Membros veem arquivos dos agentes das suas organizações" ON vector_store_files;
 CREATE POLICY "Membros veem arquivos dos agentes das suas organizações"
   ON vector_store_files FOR SELECT
   USING (
@@ -368,6 +385,7 @@ CREATE POLICY "Membros veem arquivos dos agentes das suas organizações"
 -- 3.8. Assistant Runs
 ALTER TABLE assistant_runs ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Membros veem runs dos agentes das suas organizações" ON assistant_runs;
 CREATE POLICY "Membros veem runs dos agentes das suas organizações"
   ON assistant_runs FOR SELECT
   USING (
@@ -384,6 +402,7 @@ CREATE POLICY "Membros veem runs dos agentes das suas organizações"
 -- 3.9. Password Reset Tokens
 ALTER TABLE password_reset_tokens ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Usuários veem seus próprios tokens" ON password_reset_tokens;
 CREATE POLICY "Usuários veem seus próprios tokens"
   ON password_reset_tokens FOR SELECT
   USING (user_id = auth.uid());
