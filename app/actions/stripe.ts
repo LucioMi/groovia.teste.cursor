@@ -1,11 +1,15 @@
 "use server"
 
-import { stripe } from "@/lib/stripe-server"
+import { stripe, isStripeAvailable } from "@/lib/stripe-server"
 import { SUBSCRIPTION_PLANS } from "@/lib/plans"
 import { sql } from "@/lib/db"
 import { getServerSession } from "@/lib/auth-server"
 
 export async function startCheckoutSession(planId: string) {
+  if (!isStripeAvailable()) {
+    throw new Error("Stripe is not configured. Payment features are not available.")
+  }
+
   const session = await getServerSession()
   if (!session || !session.organization) {
     throw new Error("Unauthorized")
@@ -76,6 +80,10 @@ export async function startCheckoutSession(planId: string) {
 }
 
 export async function createCustomerPortalSession() {
+  if (!isStripeAvailable()) {
+    throw new Error("Stripe is not configured. Payment features are not available.")
+  }
+
   const session = await getServerSession()
   if (!session || !session.organization) {
     throw new Error("Unauthorized")
@@ -99,6 +107,10 @@ export async function createCustomerPortalSession() {
 }
 
 export async function getCheckoutSessionStatus(sessionId: string) {
+  if (!isStripeAvailable()) {
+    return null
+  }
+
   try {
     const session = await stripe.checkout.sessions.retrieve(sessionId)
     return {

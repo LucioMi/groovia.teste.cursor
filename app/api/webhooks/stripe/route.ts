@@ -4,8 +4,15 @@ import type Stripe from "stripe"
 
 // Lazy import para evitar execução durante build
 async function getStripe() {
-  const { getStripe: getStripeClient } = await import("@/lib/stripe")
-  return getStripeClient()
+  const { getStripe: getStripeClient, isStripeAvailable } = await import("@/lib/stripe")
+  if (!isStripeAvailable()) {
+    throw new Error("Stripe is not configured")
+  }
+  const stripe = getStripeClient()
+  if (!stripe) {
+    throw new Error("Stripe is not configured")
+  }
+  return stripe
 }
 
 async function updateOrganizationSubscription(organizationId: string, data: any) {

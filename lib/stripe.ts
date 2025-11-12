@@ -1,25 +1,25 @@
 import "server-only"
 
-import Stripe from "stripe"
+// Stripe é opcional - esta função retorna null se não configurado
+let StripeModule: typeof import("stripe") | null = null
+let stripeInstance: any = null
 
-// Lazy initialization para evitar erros durante o build
-let stripeInstance: Stripe | null = null
+function isStripeConfigured(): boolean {
+  const secretKey = process.env.STRIPE_SECRET_KEY
+  return !!secretKey && !secretKey.includes("dummy") && secretKey !== "sk_test_dummy_key_for_build_only"
+}
 
-function initializeStripe(): Stripe {
+function getStripeInstance() {
   if (stripeInstance) {
     return stripeInstance
   }
   
-  const secretKey = process.env.STRIPE_SECRET_KEY
-  if (!secretKey) {
-    throw new Error("STRIPE_SECRET_KEY is not configured")
+  if (!isStripeConfigured()) {
+    return null
   }
   
-  // Verificar se a chave não é uma chave dummy de build
-  if (secretKey.includes("dummy") || secretKey === "sk_test_dummy_key_for_build_only") {
-    throw new Error("STRIPE_SECRET_KEY is not properly configured")
-  }
-  
+  const Stripe = require("stripe").default
+  const secretKey = process.env.STRIPE_SECRET_KEY!
   stripeInstance = new Stripe(secretKey, {
     apiVersion: "2024-12-18.acacia",
   })
@@ -27,7 +27,17 @@ function initializeStripe(): Stripe {
 }
 
 // Helper function para obter o Stripe de forma segura
-// Esta função só é chamada em runtime (não durante build)
-export function getStripe(): Stripe {
-  return initializeStripe()
+// Retorna null se não configurado (Stripe é opcional)
+export function getStripe() {
+  // Durante build, retorna null
+  if (typeof window === "undefined" && process.env.NEXT_PHASE === "phase-production-build") {
+    return null
+  }
+  
+  return getStripeInstance()
+}
+
+// Helper para verificar se Stripe está disponível
+export function isStripeAvailable(): boolean {
+  return isStripeConfigured()
 }
