@@ -34,4 +34,4 @@ Quando estiver pronto para produção:
 
 ---
 
-**Documentação completa:** Veja `../ADMIN_AUTH_DISABLE.md` para mais detalhes.
+**Documentação completa:** Veja `docs/ADMIN_AUTH_DISABLE.md` para mais detalhes.
