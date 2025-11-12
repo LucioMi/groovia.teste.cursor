@@ -83,15 +83,43 @@ export async function POST(request: NextRequest) {
     const supabase = createServiceClient()
 
     // Get user's organization
-    const { data: membership } = await supabase
+    console.log("[v0] [CREATE-SCAN] User ID:", user.id, "Email:", user.email)
+    const { data: membership, error: membershipError } = await supabase
       .from("organization_memberships")
-      .select("organization_id")
+      .select("organization_id, role")
       .eq("user_id", user.id)
       .maybeSingle()
 
-    if (!membership?.organization_id) {
-      return NextResponse.json({ error: "No organization found" }, { status: 404 })
+    if (membershipError) {
+      console.error("[v0] [CREATE-SCAN] Error fetching membership:", membershipError)
+      return NextResponse.json({ error: "Failed to fetch organization membership" }, { status: 500 })
     }
+
+    if (!membership?.organization_id) {
+      console.error("[v0] [CREATE-SCAN] No organization membership found for user:", user.id)
+      
+      // Try to find organization from user_preferences as fallback (for debugging)
+      const { data: preference } = await supabase
+        .from("user_preferences")
+        .select("selected_organization_id")
+        .eq("user_id", user.id)
+        .maybeSingle()
+
+      if (preference?.selected_organization_id) {
+        console.log("[v0] [CREATE-SCAN] Found organization in preferences but no membership:", preference.selected_organization_id)
+        return NextResponse.json({ 
+          error: "No organization membership found",
+          details: "User has organization in preferences but no membership record. Please ensure the user is properly added to an organization."
+        }, { status: 404 })
+      }
+
+      return NextResponse.json({ 
+        error: "No organization found",
+        details: "User needs to be part of an organization to create scans. Please ensure the user is added to an organization."
+      }, { status: 404 })
+    }
+
+    console.log("[v0] [CREATE-SCAN] Organization ID:", membership.organization_id, "Role:", membership.role)
 
     // Get all active agents from "Jornada Scan" category ordered by next_agent_id to build the flow
     const { data: agents } = await supabase
