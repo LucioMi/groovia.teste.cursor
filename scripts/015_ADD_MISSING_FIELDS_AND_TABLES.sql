@@ -46,6 +46,14 @@ ADD COLUMN IF NOT EXISTS response_payload JSONB;
 -- Criar índices
 CREATE INDEX IF NOT EXISTS idx_webhook_logs_status_code ON webhook_logs(status_code) WHERE status_code IS NOT NULL;
 
+-- 1.6. Conversations - Adicionar campos faltantes
+ALTER TABLE conversations 
+ADD COLUMN IF NOT EXISTS message_count INTEGER DEFAULT 0,
+ADD COLUMN IF NOT EXISTS last_message_at TIMESTAMP WITH TIME ZONE;
+
+-- Criar índice para last_message_at
+CREATE INDEX IF NOT EXISTS idx_conversations_last_message_at ON conversations(last_message_at) WHERE last_message_at IS NOT NULL;
+
 -- ============================================
 -- 2. CRIAR TABELAS FALTANTES
 -- ============================================
@@ -399,6 +407,8 @@ COMMENT ON COLUMN agents.last_session IS 'Data da última sessão do agente';
 COMMENT ON COLUMN agents.openai_synced_at IS 'Data da última sincronização com OpenAI';
 COMMENT ON COLUMN organizations.owner_id IS 'ID do usuário dono da organização';
 COMMENT ON COLUMN webhooks.event_type IS 'Tipo de evento (campo auxiliar além de events[])';
+COMMENT ON COLUMN conversations.message_count IS 'Número de mensagens na conversa';
+COMMENT ON COLUMN conversations.last_message_at IS 'Data da última mensagem na conversa';
 
 -- ============================================
 -- FIM DO SCRIPT DE MIGRAÇÃO

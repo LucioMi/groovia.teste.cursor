@@ -132,6 +132,8 @@ CREATE TABLE IF NOT EXISTS conversations (
   organization_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
   title TEXT,
   openai_thread_id TEXT,
+  message_count INTEGER DEFAULT 0,
+  last_message_at TIMESTAMP WITH TIME ZONE,
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'archived', 'deleted')),
   metadata JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -142,6 +144,7 @@ CREATE INDEX idx_conversations_agent ON conversations(agent_id);
 CREATE INDEX idx_conversations_user ON conversations(user_id);
 CREATE INDEX idx_conversations_org ON conversations(organization_id);
 CREATE INDEX idx_conversations_created_at ON conversations(created_at DESC);
+CREATE INDEX idx_conversations_last_message_at ON conversations(last_message_at) WHERE last_message_at IS NOT NULL;
 
 -- 3.7. Messages (Mensagens)
 CREATE TABLE IF NOT EXISTS messages (
@@ -1164,6 +1167,8 @@ COMMENT ON COLUMN agents.last_session IS 'Data da última sessão do agente';
 COMMENT ON COLUMN agents.openai_synced_at IS 'Data da última sincronização com OpenAI';
 COMMENT ON COLUMN organizations.owner_id IS 'ID do usuário dono da organização';
 COMMENT ON COLUMN webhooks.event_type IS 'Tipo de evento (campo auxiliar além de events[])';
+COMMENT ON COLUMN conversations.message_count IS 'Número de mensagens na conversa';
+COMMENT ON COLUMN conversations.last_message_at IS 'Data da última mensagem na conversa';
 COMMENT ON COLUMN scan_steps.step_type IS 'Tipo de etapa: agent (conversacional), document (manual), autonomous (automático), synthetic (compilação)';
 COMMENT ON COLUMN scan_steps.depends_on_step_ids IS 'IDs das etapas que devem estar completas antes desta';
 COMMENT ON COLUMN scan_steps.input_document_ids IS 'IDs dos documentos que servem como input para esta etapa';
