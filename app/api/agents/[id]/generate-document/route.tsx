@@ -51,6 +51,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return Response.json({ error: "Conversation not found" }, { status: 404 })
     }
 
+    // Get agent early so we can use it in organization_id lookup strategies and error handling
+    const { data: agent, error: agentError } = await supabase
+      .from("agents")
+      .select("*")
+      .eq("id", agentId)
+      .maybeSingle()
+
+    if (agentError || !agent) {
+      console.error("[v0] [GEN-DOC] Agent not found:", agentError)
+      return Response.json({ error: "Agent not found" }, { status: 404 })
+    }
+
+    console.log("[v0] [GEN-DOC] Agent loaded:", agent.name, "Category:", agent.category)
+
     // Try to get organization_id from multiple sources
     // Priority: scan_step (via conversation_id) -> scan_step (via agent_id) -> conversation -> user membership -> active scan
     let organizationId = conversation.organization_id
@@ -239,7 +253,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       console.error("[v0] [GEN-DOC] No organization found after all attempts")
       console.error("[v0] [GEN-DOC] - Conversation organization_id:", conversation.organization_id)
       console.error("[v0] [GEN-DOC] - Agent ID:", agentId)
-      console.error("[v0] [GEN-DOC] - Agent category:", agent?.category)
+      console.error("[v0] [GEN-DOC] - Agent category:", agent.category)
       console.error("[v0] [GEN-DOC] - Conversation ID:", conversationId)
       console.error("[v0] [GEN-DOC] - User ID:", user.id)
       
@@ -267,7 +281,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           hasMembership: !!allMemberships && allMemberships.length > 0,
           hasActiveScans: !!allScans && allScans.length > 0,
           conversationOrgId: conversation.organization_id,
-          agentCategory: agent?.category,
+          agentCategory: agent.category,
         }
       }, { status: 400 })
     }
@@ -285,13 +299,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       } else {
         console.log("[v0] [GEN-DOC] Successfully updated conversation with organization_id")
       }
-    }
-
-    const { data: agent } = await supabase.from("agents").select("*").eq("id", agentId).maybeSingle()
-
-    if (!agent) {
-      console.error("[v0] [GEN-DOC] Agent not found:", agentId)
-      return Response.json({ error: "Agent not found" }, { status: 404 })
     }
 
     console.log("[v0] [GEN-DOC] Agent loaded:", agent.name)
