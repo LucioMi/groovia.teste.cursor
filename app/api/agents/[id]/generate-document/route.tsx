@@ -213,26 +213,78 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
+    // Last resort: Find ANY scan that was created by this user or has conversations from this user
+    if (!organizationId) {
+      console.log("[v0] [GEN-DOC] Last resort: Finding ANY scan created by this user...")
+      
+      // Try to find scan created by this user
+      const { data: userScans } = await supabase
+        .from("scans")
+        .select("organization_id, status")
+        .eq("created_by", user.id)
+        .eq("status", "in_progress")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (userScans?.organization_id) {
+        organizationId = userScans.organization_id
+        console.log("[v0] [GEN-DOC] Found organization_id from scan created by user:", organizationId)
+      }
+    }
+
     console.log("[v0] [GEN-DOC] Final Organization ID:", organizationId)
 
     if (!organizationId) {
       console.error("[v0] [GEN-DOC] No organization found after all attempts")
       console.error("[v0] [GEN-DOC] - Conversation organization_id:", conversation.organization_id)
       console.error("[v0] [GEN-DOC] - Agent ID:", agentId)
+      console.error("[v0] [GEN-DOC] - Agent category:", agent?.category)
       console.error("[v0] [GEN-DOC] - Conversation ID:", conversationId)
+      console.error("[v0] [GEN-DOC] - User ID:", user.id)
+      
+      // Debug: Check if user has any memberships
+      const { data: allMemberships, error: membershipsError } = await supabase
+        .from("organization_memberships")
+        .select("organization_id, role")
+        .eq("user_id", user.id)
+      
+      console.error("[v0] [GEN-DOC] - User memberships:", allMemberships, "Error:", membershipsError)
+      
+      // Debug: Check if there are any scans
+      const { data: allScans, error: scansError } = await supabase
+        .from("scans")
+        .select("id, organization_id, status, created_by")
+        .eq("status", "in_progress")
+        .limit(5)
+      
+      console.error("[v0] [GEN-DOC] - Active scans:", allScans, "Error:", scansError)
+      
       return Response.json({ 
         error: "No organization selected", 
-        details: "User needs to be part of an organization, or conversation/scan must have an organization_id. Please ensure you have an active scan journey or are part of an organization."
+        details: "User needs to be part of an organization, or conversation/scan must have an organization_id. Please ensure you have an active scan journey or are part of an organization.",
+        debug: {
+          hasMembership: !!allMemberships && allMemberships.length > 0,
+          hasActiveScans: !!allScans && allScans.length > 0,
+          conversationOrgId: conversation.organization_id,
+          agentCategory: agent?.category,
+        }
       }, { status: 400 })
     }
 
     // Update conversation with organization_id if it was found but not set
     if (conversation.organization_id !== organizationId) {
       console.log("[v0] [GEN-DOC] Updating conversation with organization_id:", organizationId)
-      await supabase
+      const { error: updateConvError } = await supabase
         .from("conversations")
         .update({ organization_id: organizationId })
         .eq("id", conversationId)
+      
+      if (updateConvError) {
+        console.error("[v0] [GEN-DOC] Error updating conversation organization_id:", updateConvError)
+      } else {
+        console.log("[v0] [GEN-DOC] Successfully updated conversation with organization_id")
+      }
     }
 
     const { data: agent } = await supabase.from("agents").select("*").eq("id", agentId).maybeSingle()
