@@ -92,7 +92,7 @@ export async function GET(req: Request) {
       const completedSteps: string[] = []
       const scanSteps = scan.scan_steps || []
       
-      if (Array.isArray(scanSteps)) {
+      if (Array.isArray(scanSteps) && scanSteps.length > 0) {
         // Sort steps by step_order
         scanSteps.sort((a: any, b: any) => a.step_order - b.step_order)
         
