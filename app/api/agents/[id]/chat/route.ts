@@ -68,7 +68,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return Response.json({ error: "Agent not found" }, { status: 404 })
     }
 
-    // Try to get organization_id from user membership first
+    // Try to get organization_id from multiple sources
+    // Priority: membership -> scan created by user -> scan with agent -> scan_step with agent
+    
+    // 1. Try user membership first
     const { data: membership } = await supabase
       .from("organization_memberships")
       .select("organization_id")
@@ -78,10 +81,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     let organizationId = membership?.organization_id
     console.log("[v0] Organization ID from membership:", organizationId)
 
-    // If no organization from membership, try to get from active scan for this agent
-    // Also check if agent is part of "Jornada Scan" category to find any active scan
+    // 2. If no membership, try to find scan created by this user (most reliable)
     if (!organizationId) {
-      console.log("[v0] No organization from membership, trying active scan for agent:", agentId)
+      console.log("[v0] No membership found, trying scan created by user...")
+      const { data: userScan } = await supabase
+        .from("scans")
+        .select("id, organization_id, status")
+        .eq("created_by", user.id)
+        .eq("status", "in_progress")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (userScan?.organization_id) {
+        organizationId = userScan.organization_id
+        console.log("[v0] Found organization_id from scan created by user:", organizationId)
+      }
+    }
+
+    // 3. If still no organization, try to find active scan with this agent
+    if (!organizationId) {
+      console.log("[v0] Trying active scan for agent:", agentId)
       
       // Try to find active scan where this agent is the current agent
       let { data: activeScan } = await supabase
@@ -129,6 +149,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
+    // 4. Last resort: try to find any scan where user has conversations
+    if (!organizationId) {
+      console.log("[v0] Last resort: trying to find scan via user's conversations...")
+      const { data: userConversations } = await supabase
+        .from("conversations")
+        .select("organization_id")
+        .eq("user_id", user.id)
+        .not("organization_id", "is", null)
+        .limit(1)
+        .maybeSingle()
+
+      if (userConversations?.organization_id) {
+        organizationId = userConversations.organization_id
+        console.log("[v0] Found organization_id from user's conversations:", organizationId)
+      }
+    }
+
     console.log("[v0] Agent found:", agent.name, "Assistant ID:", agent.openai_assistant_id)
 
     if (!agent.openai_assistant_id) {
@@ -167,13 +204,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         activeConversationId = newConversation.id
         console.log("[v0] Conversation created:", activeConversationId)
 
-        // If this is a Jornada Scan agent, try to link conversation to scan_step
+        // Always try to link conversation to scan_step if this is a Jornada Scan agent and we have organizationId
         if (agent.category === "Jornada Scan" && organizationId) {
           try {
             console.log("[v0] Agent is part of Jornada Scan, attempting to link conversation to scan_step...")
             
-            // Find active scan for this organization
-            const { data: activeScan } = await supabase
+            // Try multiple strategies to find the scan
+            let activeScan = null
+            
+            // Strategy 1: Find active scan for this organization
+            const { data: scanByOrg } = await supabase
               .from("scans")
               .select("id")
               .eq("organization_id", organizationId)
@@ -182,33 +222,82 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               .limit(1)
               .maybeSingle()
 
+            if (scanByOrg) {
+              activeScan = scanByOrg
+              console.log("[v0] Found active scan by organization:", activeScan.id)
+            }
+
+            // Strategy 2: Find scan created by user if not found
+            if (!activeScan) {
+              const { data: scanByUser } = await supabase
+                .from("scans")
+                .select("id")
+                .eq("created_by", user.id)
+                .eq("status", "in_progress")
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle()
+
+              if (scanByUser) {
+                activeScan = scanByUser
+                console.log("[v0] Found active scan created by user:", activeScan.id)
+              }
+            }
+
+            // Strategy 3: Find scan with scan_step for this agent
+            if (!activeScan) {
+              const { data: scanStep } = await supabase
+                .from("scan_steps")
+                .select("scan_id")
+                .eq("agent_id", agentId)
+                .maybeSingle()
+
+              if (scanStep && scanStep.scan_id) {
+                const { data: scan } = await supabase
+                  .from("scans")
+                  .select("id, status")
+                  .eq("id", scanStep.scan_id)
+                  .eq("status", "in_progress")
+                  .maybeSingle()
+
+                if (scan) {
+                  activeScan = { id: scan.id }
+                  console.log("[v0] Found active scan via scan_step:", activeScan.id)
+                }
+              }
+            }
+
             if (activeScan) {
               console.log("[v0] Found active scan:", activeScan.id)
               
               // Find scan_step for this agent in this scan
               const { data: scanStep } = await supabase
                 .from("scan_steps")
-                .select("id")
+                .select("id, conversation_id")
                 .eq("scan_id", activeScan.id)
                 .eq("agent_id", agentId)
                 .maybeSingle()
 
               if (scanStep) {
-                console.log("[v0] Found scan_step:", scanStep.id, "- Linking conversation...")
-                
-                // Update scan_step with conversation_id
-                const { error: linkError } = await supabase
-                  .from("scan_steps")
-                  .update({
-                    conversation_id: activeConversationId,
-                    updated_at: new Date().toISOString(),
-                  })
-                  .eq("id", scanStep.id)
+                // Only update if conversation_id is null or different
+                if (!scanStep.conversation_id || scanStep.conversation_id !== activeConversationId) {
+                  console.log("[v0] Linking conversation to scan_step:", scanStep.id)
+                  
+                  const { error: linkError } = await supabase
+                    .from("scan_steps")
+                    .update({
+                      conversation_id: activeConversationId,
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", scanStep.id)
 
-                if (linkError) {
-                  console.error("[v0] Error linking conversation to scan_step:", linkError)
+                  if (linkError) {
+                    console.error("[v0] Error linking conversation to scan_step:", linkError)
+                  } else {
+                    console.log("[v0] Successfully linked conversation to scan_step")
+                  }
                 } else {
-                  console.log("[v0] Successfully linked conversation to scan_step")
+                  console.log("[v0] Conversation already linked to scan_step")
                 }
               } else {
                 console.log("[v0] No scan_step found for this agent in active scan (may not be created yet)")
@@ -236,56 +325,82 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       // If conversation exists but doesn't have organization_id, try to set it
       if (existingConversation && !existingConversation.organization_id && organizationId) {
-        console.log("[v0] Updating conversation with organization_id:", organizationId)
-        await supabase
+        console.log("[v0] Updating existing conversation with organization_id:", organizationId)
+        const { error: updateError } = await supabase
           .from("conversations")
           .update({ organization_id: organizationId })
           .eq("id", activeConversationId)
         
-        // Also try to link to scan_step if this is a Jornada Scan agent
-        if (agent.category === "Jornada Scan" && organizationId) {
-          try {
-            const { data: activeScan } = await supabase
+        if (updateError) {
+          console.error("[v0] Error updating conversation organization_id:", updateError)
+        } else {
+          console.log("[v0] Successfully updated conversation with organization_id")
+        }
+      }
+
+      // Always try to link to scan_step if this is a Jornada Scan agent and we have organizationId
+      if (agent.category === "Jornada Scan" && organizationId) {
+        try {
+          // Try multiple strategies to find the scan (same as in new conversation creation)
+          let activeScan = null
+          
+          const { data: scanByOrg } = await supabase
+            .from("scans")
+            .select("id")
+            .eq("organization_id", organizationId)
+            .eq("status", "in_progress")
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+          if (scanByOrg) {
+            activeScan = scanByOrg
+          } else {
+            const { data: scanByUser } = await supabase
               .from("scans")
               .select("id")
-              .eq("organization_id", organizationId)
+              .eq("created_by", user.id)
               .eq("status", "in_progress")
               .order("created_at", { ascending: false })
               .limit(1)
               .maybeSingle()
 
-            if (activeScan) {
-              const { data: scanStep } = await supabase
-                .from("scan_steps")
-                .select("id, conversation_id")
-                .eq("scan_id", activeScan.id)
-                .eq("agent_id", agentId)
-                .maybeSingle()
+            if (scanByUser) {
+              activeScan = scanByUser
+            }
+          }
 
-              if (scanStep) {
-                // Only update if conversation_id is null or different
-                if (!scanStep.conversation_id || scanStep.conversation_id !== activeConversationId) {
-                  const { error: linkError } = await supabase
-                    .from("scan_steps")
-                    .update({
-                      conversation_id: activeConversationId,
-                      updated_at: new Date().toISOString(),
-                    })
-                    .eq("id", scanStep.id)
-                  
-                  if (!linkError) {
-                    console.log("[v0] Linked existing conversation to scan_step")
-                  } else {
-                    console.error("[v0] Error linking conversation to scan_step:", linkError)
-                  }
+          if (activeScan) {
+            const { data: scanStep } = await supabase
+              .from("scan_steps")
+              .select("id, conversation_id")
+              .eq("scan_id", activeScan.id)
+              .eq("agent_id", agentId)
+              .maybeSingle()
+
+            if (scanStep) {
+              // Only update if conversation_id is null or different
+              if (!scanStep.conversation_id || scanStep.conversation_id !== activeConversationId) {
+                const { error: linkError } = await supabase
+                  .from("scan_steps")
+                  .update({
+                    conversation_id: activeConversationId,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq("id", scanStep.id)
+                
+                if (!linkError) {
+                  console.log("[v0] Linked existing conversation to scan_step")
                 } else {
-                  console.log("[v0] Conversation already linked to scan_step")
+                  console.error("[v0] Error linking conversation to scan_step:", linkError)
                 }
+              } else {
+                console.log("[v0] Conversation already linked to scan_step")
               }
             }
-          } catch (linkError) {
-            console.error("[v0] Error linking existing conversation to scan_step (non-critical):", linkError)
           }
+        } catch (linkError) {
+          console.error("[v0] Error linking existing conversation to scan_step (non-critical):", linkError)
         }
       }
 

@@ -66,12 +66,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     console.log("[v0] [GEN-DOC] Agent loaded:", agent.name, "Category:", agent.category)
 
     // Try to get organization_id from multiple sources
-    // Priority: scan_step (via conversation_id) -> scan_step (via agent_id) -> conversation -> user membership -> active scan
+    // Priority: conversation -> scan_step (via conversation_id) -> scan created by user -> scan_step (via agent_id) -> user membership -> active scan
     let organizationId = conversation.organization_id
+    console.log("[v0] [GEN-DOC] Initial organization_id from conversation:", organizationId)
 
-    // First, try to get from scan_step if conversation is linked to a scan
+    // Strategy 1: Try to get from scan_step if conversation is linked to a scan
     if (!organizationId) {
-      console.log("[v0] [GEN-DOC] No organization_id in conversation, trying scan_step by conversation_id...")
+      console.log("[v0] [GEN-DOC] Strategy 1: Trying scan_step by conversation_id...")
       const { data: scanStep, error: scanStepError } = await supabase
         .from("scan_steps")
         .select("scan_id")
@@ -93,11 +94,49 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
-    // If still no organization, try to find scan_step by agent_id in active scan
+    // Strategy 2: Try to find scan created by this user (most reliable)
     if (!organizationId) {
-      console.log("[v0] [GEN-DOC] Trying to find scan_step by agent_id in active scan...")
-      
-      // First, find active scan with this agent
+      console.log("[v0] [GEN-DOC] Strategy 2: Trying scan created by user...")
+      const { data: userScan } = await supabase
+        .from("scans")
+        .select("organization_id, status")
+        .eq("created_by", user.id)
+        .eq("status", "in_progress")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (userScan?.organization_id) {
+        organizationId = userScan.organization_id
+        console.log("[v0] [GEN-DOC] Found organization_id from scan created by user:", organizationId)
+        
+        // Try to link conversation to scan_step if found
+        const { data: scanStep } = await supabase
+          .from("scan_steps")
+          .select("id, conversation_id")
+          .eq("scan_id", userScan.id || "")
+          .eq("agent_id", agentId)
+          .maybeSingle()
+
+        if (scanStep && !scanStep.conversation_id) {
+          const { error: linkError } = await supabase
+            .from("scan_steps")
+            .update({
+              conversation_id: conversationId,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", scanStep.id)
+          
+          if (!linkError) {
+            console.log("[v0] [GEN-DOC] Linked conversation to scan_step")
+          }
+        }
+      }
+    }
+
+    // Strategy 3: Try to find scan_step by agent_id in active scan
+    if (!organizationId) {
+      console.log("[v0] [GEN-DOC] Strategy 3: Trying scan_step by agent_id...")
       const { data: scanSteps, error: scanStepsError } = await supabase
         .from("scan_steps")
         .select("scan_id, conversation_id")
@@ -105,7 +144,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .maybeSingle()
 
       if (scanSteps && !scanStepsError && scanSteps.scan_id) {
-        // Get the scan to check if it's active and get organization_id
         const { data: scan, error: scanError } = await supabase
           .from("scans")
           .select("organization_id, status")
@@ -138,22 +176,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
-    // Try to find ANY active scan for this agent (even without conversation link)
+    // Strategy 4: Try to find ANY active scan for this agent
     if (!organizationId) {
-      console.log("[v0] [GEN-DOC] Trying to find ANY active scan for this agent...")
-      
-      // Find all scan_steps for this agent
+      console.log("[v0] [GEN-DOC] Strategy 4: Trying ANY active scan for this agent...")
       const { data: allScanSteps } = await supabase
         .from("scan_steps")
         .select("scan_id")
         .eq("agent_id", agentId)
 
       if (allScanSteps && allScanSteps.length > 0) {
-        // Get unique scan_ids
         const scanIds = [...new Set(allScanSteps.map(s => s.scan_id))]
         console.log("[v0] [GEN-DOC] Found", scanIds.length, "scan(s) with this agent")
         
-        // Try to find an active scan
         for (const scanId of scanIds) {
           const { data: scan } = await supabase
             .from("scans")
@@ -190,9 +224,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
-    // Try user membership
+    // Strategy 5: Try user membership
     if (!organizationId) {
-      console.log("[v0] [GEN-DOC] No organization_id in conversation or scan, trying user membership...")
+      console.log("[v0] [GEN-DOC] Strategy 5: Trying user membership...")
       const { data: membership, error: membershipError } = await supabase
         .from("organization_memberships")
         .select("organization_id")
@@ -209,9 +243,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
-    // Try active scan for this agent (last resort - by current_agent_id)
+    // Strategy 6: Try active scan for this agent (by current_agent_id)
     if (!organizationId) {
-      console.log("[v0] [GEN-DOC] Trying active scan for agent as last resort (current_agent_id)...")
+      console.log("[v0] [GEN-DOC] Strategy 6: Trying active scan by current_agent_id...")
       const { data: activeScan } = await supabase
         .from("scans")
         .select("organization_id")
@@ -224,26 +258,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (activeScan?.organization_id) {
         organizationId = activeScan.organization_id
         console.log("[v0] [GEN-DOC] Found organization_id from active scan (current_agent_id):", organizationId)
-      }
-    }
-
-    // Last resort: Find ANY scan that was created by this user or has conversations from this user
-    if (!organizationId) {
-      console.log("[v0] [GEN-DOC] Last resort: Finding ANY scan created by this user...")
-      
-      // Try to find scan created by this user
-      const { data: userScans } = await supabase
-        .from("scans")
-        .select("organization_id, status")
-        .eq("created_by", user.id)
-        .eq("status", "in_progress")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      if (userScans?.organization_id) {
-        organizationId = userScans.organization_id
-        console.log("[v0] [GEN-DOC] Found organization_id from scan created by user:", organizationId)
       }
     }
 
