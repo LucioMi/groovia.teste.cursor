@@ -103,10 +103,14 @@ export async function POST(request: NextRequest) {
       .order("created_at")
 
     if (!agents || agents.length === 0) {
+      console.error("[v0] [CREATE-SCAN] No agents found for Jornada Scan category")
       return NextResponse.json({ error: "No agents available" }, { status: 400 })
     }
 
+    console.log("[v0] [CREATE-SCAN] Found", agents.length, "agents for Jornada Scan")
+
     // Create the scan
+    console.log("[v0] [CREATE-SCAN] Creating scan with organization_id:", membership.organization_id)
     const { data: scan, error: scanError } = await supabase
       .from("scans")
       .insert({
@@ -120,9 +124,11 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (scanError || !scan) {
-      console.error("[v0] Error creating scan:", scanError)
-      return NextResponse.json({ error: "Failed to create scan" }, { status: 500 })
+      console.error("[v0] [CREATE-SCAN] Error creating scan:", scanError)
+      return NextResponse.json({ error: "Failed to create scan", details: scanError?.message }, { status: 500 })
     }
+
+    console.log("[v0] [CREATE-SCAN] Scan created successfully:", scan.id)
 
     // Create scan steps based on agent flow
     // Estrutura: Etapa 1 (SCAN) -> Etapa 2 (SCAN Clarity - documento) -> Etapas 3-6 (agentes)
@@ -181,14 +187,30 @@ export async function POST(request: NextRequest) {
     }
 
     if (scanSteps.length > 0) {
+      console.log("[v0] [CREATE-SCAN] Creating", scanSteps.length, "scan steps...")
       const { data: createdSteps, error: stepsError } = await supabase
         .from("scan_steps")
         .insert(scanSteps)
         .select()
 
       if (stepsError) {
-        console.error("[v0] Error creating scan steps:", stepsError)
+        console.error("[v0] [CREATE-SCAN] Error creating scan steps:", stepsError)
         return NextResponse.json({ error: "Failed to create scan steps", details: stepsError.message }, { status: 500 })
+      }
+
+      console.log("[v0] [CREATE-SCAN] Created", createdSteps?.length || 0, "scan steps successfully")
+      
+      // Log scan steps details for debug
+      if (createdSteps) {
+        createdSteps.forEach((step: any, index: number) => {
+          console.log(`[v0] [CREATE-SCAN] Step ${index + 1}:`, {
+            id: step.id,
+            step_order: step.step_order,
+            agent_id: step.agent_id,
+            step_type: step.step_type,
+            scan_id: step.scan_id
+          })
+        })
       }
 
       // Atualizar depends_on_step_ids com os IDs reais das etapas
