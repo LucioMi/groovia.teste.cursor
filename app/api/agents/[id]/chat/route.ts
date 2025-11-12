@@ -79,16 +79,49 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     console.log("[v0] Organization ID from membership:", organizationId)
 
     // If no organization from membership, try to get from active scan for this agent
+    // Also check if agent is part of "Jornada Scan" category to find any active scan
     if (!organizationId) {
       console.log("[v0] No organization from membership, trying active scan for agent:", agentId)
-      const { data: activeScan } = await supabase
+      
+      // Try to find active scan where this agent is the current agent
+      let { data: activeScan } = await supabase
         .from("scans")
-        .select("organization_id")
+        .select("id, organization_id")
         .eq("current_agent_id", agentId)
         .eq("status", "in_progress")
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle()
+
+      // If not found, try to find any active scan with scan_steps for this agent (Jornada Scan)
+      if (!activeScan && agent.category === "Jornada Scan") {
+        console.log("[v0] Agent is part of Jornada Scan, searching for active scan with this agent...")
+        
+        // Find scan_step for this agent
+        const { data: scanStep } = await supabase
+          .from("scan_steps")
+          .select("scan_id")
+          .eq("agent_id", agentId)
+          .maybeSingle()
+
+        if (scanStep && scanStep.scan_id) {
+          // Get the scan to verify it's active
+          const { data: scan } = await supabase
+            .from("scans")
+            .select("id, organization_id, status")
+            .eq("id", scanStep.scan_id)
+            .eq("status", "in_progress")
+            .maybeSingle()
+
+          if (scan && scan.organization_id) {
+            activeScan = {
+              id: scan.id,
+              organization_id: scan.organization_id,
+            }
+            console.log("[v0] Found active scan via scan_steps:", activeScan.id)
+          }
+        }
+      }
 
       if (activeScan?.organization_id) {
         organizationId = activeScan.organization_id
@@ -133,6 +166,61 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
         activeConversationId = newConversation.id
         console.log("[v0] Conversation created:", activeConversationId)
+
+        // If this is a Jornada Scan agent, try to link conversation to scan_step
+        if (agent.category === "Jornada Scan" && organizationId) {
+          try {
+            console.log("[v0] Agent is part of Jornada Scan, attempting to link conversation to scan_step...")
+            
+            // Find active scan for this organization
+            const { data: activeScan } = await supabase
+              .from("scans")
+              .select("id")
+              .eq("organization_id", organizationId)
+              .eq("status", "in_progress")
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle()
+
+            if (activeScan) {
+              console.log("[v0] Found active scan:", activeScan.id)
+              
+              // Find scan_step for this agent in this scan
+              const { data: scanStep } = await supabase
+                .from("scan_steps")
+                .select("id")
+                .eq("scan_id", activeScan.id)
+                .eq("agent_id", agentId)
+                .maybeSingle()
+
+              if (scanStep) {
+                console.log("[v0] Found scan_step:", scanStep.id, "- Linking conversation...")
+                
+                // Update scan_step with conversation_id
+                const { error: linkError } = await supabase
+                  .from("scan_steps")
+                  .update({
+                    conversation_id: activeConversationId,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq("id", scanStep.id)
+
+                if (linkError) {
+                  console.error("[v0] Error linking conversation to scan_step:", linkError)
+                } else {
+                  console.log("[v0] Successfully linked conversation to scan_step")
+                }
+              } else {
+                console.log("[v0] No scan_step found for this agent in active scan (may not be created yet)")
+              }
+            } else {
+              console.log("[v0] No active scan found for organization (conversation not part of scan journey)")
+            }
+          } catch (linkError) {
+            // Non-critical error - conversation can exist without scan_step link
+            console.error("[v0] Error linking conversation to scan_step (non-critical):", linkError)
+          }
+        }
       } catch (error) {
         console.error("[v0] ERROR in thread/conversation creation:", error)
         throw error
@@ -153,6 +241,52 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           .from("conversations")
           .update({ organization_id: organizationId })
           .eq("id", activeConversationId)
+        
+        // Also try to link to scan_step if this is a Jornada Scan agent
+        if (agent.category === "Jornada Scan" && organizationId) {
+          try {
+            const { data: activeScan } = await supabase
+              .from("scans")
+              .select("id")
+              .eq("organization_id", organizationId)
+              .eq("status", "in_progress")
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle()
+
+            if (activeScan) {
+              const { data: scanStep } = await supabase
+                .from("scan_steps")
+                .select("id, conversation_id")
+                .eq("scan_id", activeScan.id)
+                .eq("agent_id", agentId)
+                .maybeSingle()
+
+              if (scanStep) {
+                // Only update if conversation_id is null or different
+                if (!scanStep.conversation_id || scanStep.conversation_id !== activeConversationId) {
+                  const { error: linkError } = await supabase
+                    .from("scan_steps")
+                    .update({
+                      conversation_id: activeConversationId,
+                      updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", scanStep.id)
+                  
+                  if (!linkError) {
+                    console.log("[v0] Linked existing conversation to scan_step")
+                  } else {
+                    console.error("[v0] Error linking conversation to scan_step:", linkError)
+                  }
+                } else {
+                  console.log("[v0] Conversation already linked to scan_step")
+                }
+              }
+            }
+          } catch (linkError) {
+            console.error("[v0] Error linking existing conversation to scan_step (non-critical):", linkError)
+          }
+        }
       }
 
       if (!threadId) {

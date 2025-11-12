@@ -51,12 +51,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return Response.json({ error: "Conversation not found" }, { status: 404 })
     }
 
-    // Try to get organization_id from conversation first, then from scan, then from user membership
+    // Try to get organization_id from multiple sources
+    // Priority: scan_step (via conversation_id) -> scan_step (via agent_id) -> conversation -> user membership -> active scan
     let organizationId = conversation.organization_id
 
+    // First, try to get from scan_step if conversation is linked to a scan
     if (!organizationId) {
-      console.log("[v0] [GEN-DOC] No organization_id in conversation, trying scan_step...")
-      // Try to get from scan_step if conversation is linked to a scan
+      console.log("[v0] [GEN-DOC] No organization_id in conversation, trying scan_step by conversation_id...")
       const { data: scanStep, error: scanStepError } = await supabase
         .from("scan_steps")
         .select("scan_id")
@@ -64,7 +65,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .maybeSingle()
 
       if (scanStep && !scanStepError && scanStep.scan_id) {
-        console.log("[v0] [GEN-DOC] Found scan_step, fetching scan organization_id...")
+        console.log("[v0] [GEN-DOC] Found scan_step linked to conversation, fetching scan...")
         const { data: scan, error: scanError } = await supabase
           .from("scans")
           .select("organization_id")
@@ -73,11 +74,57 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
         if (scan && !scanError && scan.organization_id) {
           organizationId = scan.organization_id
-          console.log("[v0] [GEN-DOC] Found organization_id from scan:", organizationId)
+          console.log("[v0] [GEN-DOC] Found organization_id from scan via scan_step:", organizationId)
         }
       }
     }
 
+    // If still no organization, try to find scan_step by agent_id in active scan
+    if (!organizationId) {
+      console.log("[v0] [GEN-DOC] Trying to find scan_step by agent_id in active scan...")
+      
+      // First, find active scan with this agent
+      const { data: scanSteps, error: scanStepsError } = await supabase
+        .from("scan_steps")
+        .select("scan_id, conversation_id")
+        .eq("agent_id", agentId)
+        .maybeSingle()
+
+      if (scanSteps && !scanStepsError && scanSteps.scan_id) {
+        // Get the scan to check if it's active and get organization_id
+        const { data: scan, error: scanError } = await supabase
+          .from("scans")
+          .select("organization_id, status")
+          .eq("id", scanSteps.scan_id)
+          .eq("status", "in_progress")
+          .maybeSingle()
+
+        if (scan && !scanError && scan.organization_id) {
+          organizationId = scan.organization_id
+          console.log("[v0] [GEN-DOC] Found organization_id from active scan for agent:", organizationId)
+          
+          // Link conversation to scan_step if not already linked
+          if (!scanSteps.conversation_id) {
+            const { error: linkError } = await supabase
+              .from("scan_steps")
+              .update({
+                conversation_id: conversationId,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("scan_id", scanSteps.scan_id)
+              .eq("agent_id", agentId)
+            
+            if (!linkError) {
+              console.log("[v0] [GEN-DOC] Linked conversation to scan_step")
+            } else {
+              console.error("[v0] [GEN-DOC] Error linking conversation to scan_step:", linkError)
+            }
+          }
+        }
+      }
+    }
+
+    // Try user membership
     if (!organizationId) {
       console.log("[v0] [GEN-DOC] No organization_id in conversation or scan, trying user membership...")
       const { data: membership } = await supabase
@@ -89,14 +136,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       organizationId = membership?.organization_id
     }
 
-    console.log("[v0] [GEN-DOC] Organization ID:", organizationId)
+    // Try active scan for this agent (last resort)
+    if (!organizationId) {
+      console.log("[v0] [GEN-DOC] Trying active scan for agent as last resort...")
+      const { data: activeScan } = await supabase
+        .from("scans")
+        .select("organization_id")
+        .eq("current_agent_id", agentId)
+        .eq("status", "in_progress")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (activeScan?.organization_id) {
+        organizationId = activeScan.organization_id
+        console.log("[v0] [GEN-DOC] Found organization_id from active scan (current_agent_id):", organizationId)
+      }
+    }
+
+    console.log("[v0] [GEN-DOC] Final Organization ID:", organizationId)
 
     if (!organizationId) {
-      console.error("[v0] [GEN-DOC] No organization found for user, conversation, or scan")
+      console.error("[v0] [GEN-DOC] No organization found after all attempts")
+      console.error("[v0] [GEN-DOC] - Conversation organization_id:", conversation.organization_id)
+      console.error("[v0] [GEN-DOC] - Agent ID:", agentId)
+      console.error("[v0] [GEN-DOC] - Conversation ID:", conversationId)
       return Response.json({ 
         error: "No organization selected", 
-        details: "User needs to be part of an organization, or conversation/scan must have an organization_id"
+        details: "User needs to be part of an organization, or conversation/scan must have an organization_id. Please ensure you have an active scan journey or are part of an organization."
       }, { status: 400 })
+    }
+
+    // Update conversation with organization_id if it was found but not set
+    if (conversation.organization_id !== organizationId) {
+      console.log("[v0] [GEN-DOC] Updating conversation with organization_id:", organizationId)
+      await supabase
+        .from("conversations")
+        .update({ organization_id: organizationId })
+        .eq("id", conversationId)
     }
 
     const { data: agent } = await supabase.from("agents").select("*").eq("id", agentId).maybeSingle()
